@@ -22,7 +22,16 @@ public struct TimingReference: Sendable {
         public let stimulusStartIndex: Int
         /// Peak-to-RMS ratio of the correlation, in dB. Below ~12 dB the
         /// detection should be treated as failed and the user asked to retry.
+        /// NOTE: threshold tuned on marker+noise synthetics only — see
+        /// docs/VALIDATION.md before trusting it on real sweep recordings.
         public let confidenceDB: Double
+        /// Start of the end-of-stimulus marker, when one was found.
+        public let endMarkerStartIndex: Int?
+        /// Estimated clock drift between the playback DAC and the phone ADC,
+        /// in parts per million, measured from the spacing of the two markers
+        /// over the stimulus duration. Positive = playback clock runs slow
+        /// relative to capture. v1 reports the drift; correction comes later.
+        public let clockDriftPPM: Double?
     }
 
     /// Minimum confidence for a detection to be considered trustworthy.
@@ -53,15 +62,46 @@ public struct TimingReference: Sendable {
         return Marker(samples: samples, sampleRate: sampleRate, guardInterval: guardInterval)
     }
 
-    /// Full stimulus = marker + guard silence + payload.
-    public static func assembleStimulus(marker: Marker, payload: [Double]) -> [Double] {
+    /// Full stimulus = marker + guard silence + payload
+    /// [+ guard silence + end marker].
+    ///
+    /// The optional end marker enables clock-drift estimation: the spacing
+    /// between the two detected markers, compared to the known assembled
+    /// spacing, measures the playback-DAC vs capture-ADC rate mismatch over
+    /// the sweep duration.
+    public static func assembleStimulus(
+        marker: Marker,
+        payload: [Double],
+        includeEndMarker: Bool = false
+    ) -> [Double] {
         let guardSamples = [Double](repeating: 0, count: Int(marker.guardInterval * marker.sampleRate))
-        return marker.samples + guardSamples + payload
+        var stimulus = marker.samples + guardSamples + payload
+        if includeEndMarker {
+            stimulus += guardSamples + marker.samples
+        }
+        return stimulus
+    }
+
+    /// Sample distance between the starts of the two markers in a stimulus
+    /// assembled with `includeEndMarker: true`. Pass this to `detect` to get
+    /// a drift estimate.
+    public static func expectedMarkerSpacing(marker: Marker, payloadCount: Int) -> Int {
+        let guardCount = Int(marker.guardInterval * marker.sampleRate)
+        return marker.samples.count + 2 * guardCount + payloadCount
     }
 
     /// Locate the marker in a recording via FFT cross-correlation.
     /// Returns nil when the recording is shorter than the marker.
-    public static func detect(marker: Marker, in recording: [Double]) -> Detection? {
+    ///
+    /// - Parameter expectedMarkerSpacing: when the stimulus was assembled
+    ///   with an end marker, the known start-to-start marker distance in
+    ///   stimulus samples. The detector then searches for the end marker
+    ///   near that offset (±1 %) and reports the measured clock drift.
+    public static func detect(
+        marker: Marker,
+        in recording: [Double],
+        expectedMarkerSpacing: Int? = nil
+    ) -> Detection? {
         guard recording.count >= marker.samples.count else { return nil }
         let correlation = FFT.crossCorrelate(signal: recording, template: marker.samples)
 
@@ -79,12 +119,57 @@ public struct TimingReference: Sendable {
         let rms = (sumSquares / Double(correlation.count)).squareRoot()
         let confidence = rms > 0 ? 20 * log10(peakValue / rms) : 0
 
-        let stimulusStart = peakIndex + marker.samples.count
+        // Start and end markers are identical, so the global correlation peak
+        // may be either one. Search a ±1 % window at both ±spacing (drift is
+        // well below 1000 ppm; the window also absorbs mild BT jitter) and
+        // resolve the pair by whichever companion peak is stronger.
+        var startIndex = peakIndex
+        var endMarkerIndex: Int?
+        var driftPPM: Double?
+        if let spacing = expectedMarkerSpacing, spacing > 0 {
+            let tolerance = max(spacing / 100, 32)
+            func windowPeak(center: Int) -> (index: Int, value: Double)? {
+                let lo = max(0, center - tolerance)
+                let hi = min(correlation.count - 1, center + tolerance)
+                guard lo < hi else { return nil }
+                var bestIndex = lo
+                var bestValue = 0.0
+                for i in lo...hi where abs(correlation[i]) > bestValue {
+                    bestValue = abs(correlation[i])
+                    bestIndex = i
+                }
+                return (bestIndex, bestValue)
+            }
+            let forward = windowPeak(center: peakIndex + spacing)
+            let backward = windowPeak(center: peakIndex - spacing)
+
+            // Require a real companion peak, not window noise: the end marker
+            // plays at the same level as the start marker, so demand a
+            // comparable correlation magnitude.
+            let floor = peakValue * 0.25
+            let forwardValue = forward.map { $0.value } ?? 0
+            let backwardValue = backward.map { $0.value } ?? 0
+            if backwardValue >= floor, backwardValue >= forwardValue, let backward {
+                // Global peak was the END marker.
+                startIndex = backward.index
+                endMarkerIndex = peakIndex
+            } else if forwardValue >= floor, let forward {
+                endMarkerIndex = forward.index
+            }
+            if let endMarkerIndex {
+                let measured = Double(endMarkerIndex - startIndex)
+                driftPPM = (measured - Double(spacing)) / Double(spacing) * 1_000_000
+            }
+        }
+
+        let stimulusStart = startIndex + marker.samples.count
             + Int(marker.guardInterval * marker.sampleRate)
         return Detection(
-            markerStartIndex: peakIndex,
+            markerStartIndex: startIndex,
             stimulusStartIndex: stimulusStart,
-            confidenceDB: confidence
+            confidenceDB: confidence,
+            endMarkerStartIndex: endMarkerIndex,
+            clockDriftPPM: driftPPM
         )
     }
 }

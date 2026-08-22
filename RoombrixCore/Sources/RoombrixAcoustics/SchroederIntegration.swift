@@ -45,13 +45,22 @@ public enum SchroederIntegration {
         let noiseFloorDB = 10 * log10(max(noisePower / meanPower, 1e-14))
 
         // Smoothed level in 10 ms blocks to find the noise-crossing point.
+        // The scan starts after the energy peak (direct sound): a recording
+        // with a silent lead-in would otherwise truncate before the decay
+        // even begins.
+        var peakIndex = 0
+        var peakValue = 0.0
+        for (i, v) in squared.enumerated() where v > peakValue {
+            peakValue = v
+            peakIndex = i
+        }
         let block = max(1, Int(0.01 * sampleRate))
         var truncationIndex = squared.count
-        var i = 0
+        var i = (peakIndex / block + 1) * block
         while i + block <= squared.count {
             let blockPower = squared[i..<(i + block)].reduce(0, +) / Double(block)
             let blockDB = 10 * log10(max(blockPower / meanPower, 1e-14))
-            if blockDB <= noiseFloorDB + noiseMarginDB && i > 0 {
+            if blockDB <= noiseFloorDB + noiseMarginDB {
                 truncationIndex = i
                 break
             }

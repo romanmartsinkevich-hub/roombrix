@@ -61,6 +61,17 @@ public enum FlutterEcho {
         }
         guard envelope.count > 16 else { return nil }
 
+        // Restrict analysis to the decaying region above the noise floor.
+        // Past the noise crossing the envelope flattens; detrending a bent
+        // (decay-then-flat) curve leaves a smooth residual whose
+        // autocorrelation is high at small lags — a false-positive machine.
+        let tailBlocks = max(1, envelope.count / 10)
+        let noiseLevel = envelope.suffix(tailBlocks).reduce(0, +) / Double(tailBlocks)
+        if let crossing = envelope.firstIndex(where: { $0 <= noiseLevel + 8 }), crossing > 32 {
+            envelope = Array(envelope[..<crossing])
+        }
+        guard envelope.count > 16 else { return nil }
+
         // Detrend: remove the linear (exponential-decay) component in dB.
         let n = Double(envelope.count)
         var sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumXX = 0.0
@@ -85,14 +96,19 @@ public enum FlutterEcho {
         for v in residual { zeroLag += v * v }
         guard zeroLag > 0 else { return nil }
 
-        var bestLag = 0
-        var bestValue = 0.0
-        for lag in minLag...maxLag {
+        func autocorrelation(at lag: Int) -> Double {
+            guard lag > 0, lag < residual.count else { return 0 }
             var acc = 0.0
             for k in 0..<(residual.count - lag) {
                 acc += residual[k] * residual[k + lag]
             }
-            let normalized = acc / zeroLag
+            return acc / zeroLag
+        }
+
+        var bestLag = 0
+        var bestValue = 0.0
+        for lag in minLag...maxLag {
+            let normalized = autocorrelation(at: lag)
             if normalized > bestValue {
                 bestValue = normalized
                 bestLag = lag
@@ -100,6 +116,11 @@ public enum FlutterEcho {
         }
 
         guard bestValue >= threshold, bestLag > 0 else { return nil }
+        // The winner must be a genuine peak, not the window edge of a
+        // smoothly decaying autocorrelation (another false-positive shape).
+        guard bestValue >= autocorrelation(at: bestLag - 1),
+              bestValue >= autocorrelation(at: bestLag + 1)
+        else { return nil }
         // Require the period's harmonic to also correlate, otherwise a single
         // late reflection would masquerade as flutter.
         let harmonicLag = bestLag * 2

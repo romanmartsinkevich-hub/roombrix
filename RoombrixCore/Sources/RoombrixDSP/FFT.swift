@@ -1,11 +1,12 @@
 import Foundation
-#if canImport(Accelerate)
-import Accelerate
-#endif
 
-/// Radix-2 FFT with a portable pure-Swift implementation and an Accelerate
-/// fast path on Apple platforms. All Roombrix spectral processing goes
+/// Portable pure-Swift radix-2 FFT. All Roombrix spectral processing goes
 /// through this type so the DSP kernel stays testable on Linux CI.
+///
+/// The interface (`transform`/`magnitudeSpectrum`/`convolve`/`crossCorrelate`)
+/// is deliberately shaped so a vDSP-backed implementation can be swapped in
+/// behind it on Apple platforms if device profiling shows the need; no such
+/// fast path exists yet.
 public enum FFT {
 
     /// Smallest power of two >= n.

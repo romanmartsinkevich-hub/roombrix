@@ -29,6 +29,22 @@ known answers (`Tests/RoombrixAcousticsTests/SyntheticIR.swift`):
 - **FFT vs naive DFT**, convolution vs direct sum, round-trips.
 - **Timing marker** recovered within ±2 samples at −6 dB SNR into noise;
   pure noise stays below the confidence gate.
+- **Clock drift**: end-of-stimulus marker spacing recovers 0 ppm and an
+  injected +1000 ppm within ±100 ppm; alignment resolves to the *start*
+  marker even when the end marker correlates more strongly.
+
+### Known limitation: `TimingReference.confidenceDB` threshold
+
+The 12 dB minimum-confidence gate (`TimingReference.minimumConfidenceDB`)
+was tuned on **marker + noise synthetics only**. On real recordings the ESS
+payload is present in the correlation signal and inflates the correlation
+RMS (the denominator of the peak-to-RMS confidence metric), which deflates
+`confidenceDB` for perfectly good detections. **Re-tune this threshold on
+real sweep recordings during the Sprint 0 capture spike** — either by
+excluding the payload region from the RMS estimate or by recalibrating the
+threshold empirically across the device-quirks test matrix. Until then,
+treat marginal confidence failures on real hardware as suspect-threshold,
+not suspect-recording.
 
 Run: `cd RoombrixCore && swift test` (63 tests).
 

@@ -94,6 +94,58 @@ enum SyntheticIR {
         return ImpulseResponse(samples: samples, sampleRate: sampleRate, directIndex: 0)
     }
 
+    /// "Hostile" but realistic room IR: silent lead-in (so the direct sound
+    /// sits at a nonzero index and peak auto-detection is exercised), a
+    /// direct-sound peak, distinct aperiodic early reflections, a diffuse
+    /// exponential tail with known RT60, a realistic noise floor across the
+    /// whole record, and a small DC offset. The other generators start at
+    /// index 0 with no arrival structure; this one stresses the full
+    /// pipeline the way a real capture does.
+    static func realisticRoom(
+        rt60: Double,
+        duration: Double,
+        sampleRate: Double,
+        leadIn: Double = 0.05,
+        noiseFloorDB: Double = -55,
+        dcOffset: Double = 0.002,
+        seed: UInt64 = 42
+    ) -> (ir: ImpulseResponse, directIndex: Int) {
+        var rng = SeededGenerator(seed: seed)
+        let count = Int((leadIn + duration) * sampleRate)
+        let directIndex = Int(leadIn * sampleRate)
+        var samples = [Double](repeating: 0, count: count)
+
+        // Direct sound: dominant peak with a short bandlimited-ish skirt.
+        samples[directIndex] = 1.0
+        if directIndex + 1 < count { samples[directIndex + 1] = 0.35 }
+        if directIndex > 0 { samples[directIndex - 1] = 0.15 }
+
+        // Distinct early reflections at aperiodic delays (no flutter).
+        let earlyReflections: [(delayMs: Double, gain: Double)] = [
+            (2.9, 0.55), (5.3, -0.40), (8.7, 0.30), (13.1, -0.22),
+        ]
+        for reflection in earlyReflections {
+            let index = directIndex + Int(reflection.delayMs / 1_000 * sampleRate)
+            if index < count { samples[index] += reflection.gain }
+        }
+
+        // Diffuse tail from ~15 ms after the direct sound.
+        let tailStart = directIndex + Int(0.015 * sampleRate)
+        for i in tailStart..<count {
+            let t = Double(i - tailStart) / sampleRate
+            samples[i] += Double.random(in: -1...1, using: &rng) * 0.35 * pow(10, -3 * t / rt60)
+        }
+
+        // Noise floor over the entire record + DC offset.
+        let noiseAmplitude = pow(10, noiseFloorDB / 20)
+        for i in 0..<count {
+            samples[i] += Double.random(in: -1...1, using: &rng) * noiseAmplitude + dcOffset
+        }
+
+        // No explicit directIndex: peak auto-detection must find it.
+        return (ImpulseResponse(samples: samples, sampleRate: sampleRate), directIndex)
+    }
+
     /// Decaying sinusoid (an isolated room mode) over a faster broadband decay.
     static func modalIR(
         modeFrequency: Double,

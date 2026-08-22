@@ -5,9 +5,14 @@ import Foundation
 ///
 /// Supported inputs:
 /// - "Export measurement as text": header lines starting with `*`, then rows
-///   of `frequency SPL [phase]` (space, tab, or comma separated).
+///   of `frequency SPL [phase]` (space, tab, comma, or semicolon separated).
 /// - RT60 text export: rows of `band  EDT  T20  T30 …` under a header line;
 ///   we parse band center plus named columns.
+///
+/// Locale robustness: REW exports follow the host machine's locale, so
+/// European files use decimal commas ("0,45") and typically semicolons or
+/// whitespace as field separators. Per line: if commas appear but no dots,
+/// commas are decimal separators; otherwise commas separate fields.
 public enum REWImport {
 
     public struct FrequencyResponsePoint: Sendable {
@@ -109,8 +114,19 @@ public enum REWImport {
 
     // MARK: - Helpers
 
+    /// Tokenize one data line into numbers, handling both dot-decimal and
+    /// European comma-decimal formats.
+    ///
+    /// - A line with commas but no dots is comma-decimal: commas become dots
+    ///   and only whitespace/tab/semicolon separate fields. (Splitting on
+    ///   those commas would silently turn "0,45" into 0 and 45.)
+    /// - A line containing dots uses commas, semicolons, and whitespace as
+    ///   field separators.
     static func numericFields(of line: String) -> [Double] {
-        line.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "," || $0 == ";" })
+        let commaIsDecimal = line.contains(",") && !line.contains(".")
+        let normalized = commaIsDecimal ? line.replacingOccurrences(of: ",", with: ".") : line
+        return normalized
+            .split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == ";" || (!commaIsDecimal && $0 == ",") })
             .compactMap { Double($0) }
     }
 }

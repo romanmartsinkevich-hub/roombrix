@@ -66,6 +66,51 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(band500!.edt!, 0.48, accuracy: 1e-9)
     }
 
+    // MARK: - European locale exports (decimal commas)
+
+    func testDecimalCommaDoesNotSilentlyMisparse() {
+        // Regression: "0,45" previously split on the comma into 0 and 45.
+        XCTAssertEqual(REWImport.numericFields(of: "500\t0,45"), [500, 0.45])
+        XCTAssertEqual(REWImport.numericFields(of: "500 0,45 0,47"), [500, 0.45, 0.47])
+    }
+
+    func testDotDecimalLinesKeepCommaAsFieldSeparator() {
+        // US-locale CSV: dots present, so commas separate fields.
+        XCTAssertEqual(REWImport.numericFields(of: "500.0,0.45,0.47"), [500.0, 0.45, 0.47])
+    }
+
+    func testParseEuropeanRT60Export() throws {
+        let text = """
+        * RT60 data (European locale)
+        Band  EDT  T20  T30
+        125   0,62 0,58 0,60
+        500   0,48 0,45 0,47
+        1000  0,44 0,42 0,43
+        """
+        let rows = try REWImport.parseRT60(text: text)
+        XCTAssertEqual(rows.count, 3)
+        let band500 = rows.first { $0.bandCenter == 500 }
+        XCTAssertNotNil(band500)
+        XCTAssertEqual(band500!.t20!, 0.45, accuracy: 1e-9)
+        XCTAssertEqual(band500!.t30!, 0.47, accuracy: 1e-9)
+        XCTAssertEqual(band500!.edt!, 0.48, accuracy: 1e-9)
+    }
+
+    func testParseSemicolonSeparatedEuropeanFrequencyResponse() throws {
+        let text = """
+        * Measurement data measured by REW V5.20 (European locale)
+        * Freq(Hz);SPL(dB);Phase(degrees)
+        20,000;68,42;-12,3
+        1000,000;75,55;45,0
+        """
+        let points = try REWImport.parseFrequencyResponse(text: text)
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0].frequency, 20, accuracy: 1e-9)
+        XCTAssertEqual(points[0].spl, 68.42, accuracy: 1e-9)
+        XCTAssertEqual(points[0].phase!, -12.3, accuracy: 1e-9)
+        XCTAssertEqual(points[1].frequency, 1_000, accuracy: 1e-9)
+    }
+
     func testParseRejectsEmptyAndGarbage() {
         XCTAssertThrowsError(try REWImport.parseFrequencyResponse(text: ""))
         XCTAssertThrowsError(try REWImport.parseRT60(text: "* only comments\n* nothing else"))

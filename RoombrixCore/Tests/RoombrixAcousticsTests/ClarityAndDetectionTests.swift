@@ -85,6 +85,51 @@ final class ClarityAndDetectionTests: XCTestCase {
         XCTAssertEqual(avg!.levelsDB[1], 7.0, accuracy: 0.1)
     }
 
+    func testFullPipelineOnHostileRealisticIR() {
+        // Direct peak at a nonzero index, aperiodic early reflections,
+        // −55 dB noise floor, and a DC offset — all at once.
+        let trueRT = 0.5
+        let (ir, expectedDirectIndex) = SyntheticIR.realisticRoom(
+            rt60: trueRT, duration: 1.5, sampleRate: fs
+        )
+
+        // Peak auto-detection must land on the direct sound, not lead-in
+        // noise or a reflection.
+        XCTAssertEqual(ir.directIndex, expectedDirectIndex)
+
+        let report = RoomAnalyzer.analyze(
+            primary: ir,
+            ambient: (0..<4_000).map { _ in Double.random(in: -0.002...0.002) }
+        )
+
+        // Decay: the diffuse tail carries the RT; direct/early structure and
+        // DC must not derail the band estimates (DC is outside every band).
+        guard let mid = report.midBandRT60 else {
+            return XCTFail("mid-band RT60 not recovered from realistic IR")
+        }
+        XCTAssertEqual(mid, trueRT, accuracy: trueRT * 0.20)
+        for band in report.bandDecays where band.centerFrequency >= 250 && band.centerFrequency <= 4_000 {
+            guard let rt = ReverbTime.bestEstimate(band) else {
+                XCTFail("no RT for \(band.centerFrequency) Hz band")
+                continue
+            }
+            XCTAssertEqual(rt, trueRT, accuracy: trueRT * 0.25, "band \(band.centerFrequency) Hz")
+        }
+
+        // Clarity: strong direct + early energy inside 80 ms ⇒ positive C80.
+        XCTAssertNotNil(report.c80)
+        XCTAssertGreaterThan(report.c80!, 0)
+        XCTAssertTrue(report.c80!.isFinite)
+
+        // Aperiodic reflections must not read as flutter.
+        XCTAssertNil(report.flutterEcho)
+
+        // The rest of the report is populated and sane.
+        XCTAssertNotNil(report.noiseFloor)
+        XCTAssertFalse(report.frequencyResponse.frequencies.isEmpty)
+        XCTAssertTrue(report.smoothnessDeviationDB.isFinite)
+    }
+
     func testFullAnalyzerPipeline() {
         let ir = SyntheticIR.exponentialDecay(rt60: 0.6, duration: 2.0, sampleRate: fs)
         let report = RoomAnalyzer.analyze(primary: ir, ambient: [Double](repeating: 0.001, count: 4_000))

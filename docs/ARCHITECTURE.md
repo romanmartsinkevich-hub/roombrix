@@ -73,9 +73,9 @@ streamer and the app only listens. That path is implemented first
 - **Flutter detection on the detrended log-energy envelope:** removing the
   exponential-decay trend first is what prevents every smooth room from
   false-positiving at small lags.
-- **Pure-Swift FFT** with an `#if canImport(Accelerate)` seam reserved. Swap
-  in vDSP on Apple platforms if profiling demands it; the API surface
-  (`FFT.transform/convolve/crossCorrelate`) stays fixed.
+- **Pure-Swift FFT** (no vDSP fast path yet). If device profiling demands it,
+  a vDSP-backed implementation can be added behind the same API surface
+  (`FFT.transform/convolve/crossCorrelate`) without touching callers.
 
 ## Scoring (v1 weights, brief §4.1)
 

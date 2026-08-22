@@ -90,14 +90,17 @@ case "stimulus":
     let rate = flagValue("--rate", in: args).flatMap(Double.init) ?? 48_000
     let sweep = SineSweep(parameters: .init(duration: duration, sampleRate: rate))
     let marker = TimingReference.makeMarker(sampleRate: rate)
-    let stimulus = TimingReference.assembleStimulus(marker: marker, payload: sweep.samples)
+    let stimulus = TimingReference.assembleStimulus(
+        marker: marker, payload: sweep.samples, includeEndMarker: true
+    )
     let url = URL(fileURLWithPath: args[1])
     do {
         try WAVFile.writeFloat32Mono(samples: stimulus.map { $0 * 0.9 }, sampleRate: rate, to: url)
         print("Wrote stimulus: \(url.path)")
-        print(String(format: "  marker %.0f ms + guard %.0f ms + ESS sweep %.0f s @ %.0f Hz",
+        print(String(format: "  marker %.0f ms + guard %.0f ms + ESS sweep %.0f s + guard + end marker @ %.0f Hz",
                      Double(marker.samples.count) / rate * 1_000,
                      marker.guardInterval * 1_000, duration, rate))
+        print("  end marker enables clock-drift estimation (marker spacing: \(TimingReference.expectedMarkerSpacing(marker: marker, payloadCount: sweep.samples.count)) samples)")
     } catch {
         fail("Could not write \(url.path): \(error)")
     }

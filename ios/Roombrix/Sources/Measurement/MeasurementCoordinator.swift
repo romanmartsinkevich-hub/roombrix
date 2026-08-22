@@ -39,9 +39,11 @@ final class MeasurementCoordinator: ObservableObject {
     ))
     let marker = TimingReference.makeMarker(sampleRate: 48_000)
 
-    /// The exportable stimulus (timing marker + guard + sweep) for path 1.
+    /// The exportable stimulus (timing marker + guard + sweep + guard +
+    /// end marker) for path 1. The end marker measures playback/capture
+    /// clock drift over the sweep.
     var exportableStimulus: [Double] {
-        TimingReference.assembleStimulus(marker: marker, payload: sweep.samples)
+        TimingReference.assembleStimulus(marker: marker, payload: sweep.samples, includeEndMarker: true)
     }
 
     /// Process a completed capture into score + diagnosis.
@@ -60,8 +62,14 @@ final class MeasurementCoordinator: ObservableObject {
 
         let result: Result<(RoomScore, Diagnosis), String> = await Task.detached(priority: .userInitiated) {
             // 1. Locate the timing marker; refuse low-confidence alignments.
-            guard let detection = TimingReference.detect(marker: marker, in: recording),
-                  detection.confidenceDB >= TimingReference.minimumConfidenceDB
+            // The end-marker spacing yields a clock-drift estimate (reported
+            // with the measurement in v1; resample correction comes later).
+            let spacing = TimingReference.expectedMarkerSpacing(
+                marker: marker, payloadCount: sweep.samples.count
+            )
+            guard let detection = TimingReference.detect(
+                marker: marker, in: recording, expectedMarkerSpacing: spacing
+            ), detection.confidenceDB >= TimingReference.minimumConfidenceDB
             else {
                 return .failure("Could not detect the timing reference in the recording. Increase the volume or reduce background noise, then try again.")
             }
