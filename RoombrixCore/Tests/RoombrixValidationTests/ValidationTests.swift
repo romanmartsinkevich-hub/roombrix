@@ -27,6 +27,48 @@ final class ValidationTests: XCTestCase {
         XCTAssertThrowsError(try WAVFile.parse(data: Data(repeating: 7, count: 100)))
     }
 
+    func testWAVPCM24RoundTrip() throws {
+        let samples = (0..<500).map { sin(2 * .pi * 100 * Double($0) / 48_000) * 0.8 }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roombrix-test-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try WAVFile.writePCM24Mono(samples: samples, sampleRate: 48_000, to: url)
+        let audio = try WAVFile.read(url: url)
+
+        XCTAssertEqual(audio.sampleRate, 48_000)
+        XCTAssertEqual(audio.samples.count, samples.count)
+        for (a, b) in zip(audio.samples, samples) {
+            XCTAssertEqual(a, b, accuracy: 1.0 / 8_388_607 * 2, "24-bit quantization only")
+        }
+    }
+
+    func testWAVStereoUsesLeftChannel() throws {
+        // Hand-built 16-bit stereo file: left = ramp, right = constant.
+        let frames = 100
+        var data = Data()
+        func u16(_ v: UInt16) { var le = v.littleEndian; withUnsafeBytes(of: &le) { data.append(contentsOf: $0) } }
+        func u32(_ v: UInt32) { var le = v.littleEndian; withUnsafeBytes(of: &le) { data.append(contentsOf: $0) } }
+        let dataSize = UInt32(frames * 4)
+        data.append(contentsOf: "RIFF".utf8); u32(36 + dataSize)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8); u32(16)
+        u16(1); u16(2)          // PCM, stereo
+        u32(44_100); u32(44_100 * 4)
+        u16(4); u16(16)         // block align, bits
+        data.append(contentsOf: "data".utf8); u32(dataSize)
+        for i in 0..<frames {
+            u16(UInt16(bitPattern: Int16(i * 100)))   // left: ramp
+            u16(UInt16(bitPattern: Int16(-32_000)))   // right: constant
+        }
+
+        let audio = try WAVFile.parse(data: data)
+        XCTAssertEqual(audio.sampleRate, 44_100)
+        XCTAssertEqual(audio.samples.count, frames)
+        XCTAssertEqual(audio.samples[0], 0, accuracy: 1e-9)
+        XCTAssertEqual(audio.samples[10], Double(1_000) / 32_768, accuracy: 1e-9, "left channel, not right")
+    }
+
     // MARK: - REW imports
 
     func testParseREWFrequencyResponseExport() throws {
@@ -94,6 +136,37 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(band500!.t20!, 0.45, accuracy: 1e-9)
         XCTAssertEqual(band500!.t30!, 0.47, accuracy: 1e-9)
         XCTAssertEqual(band500!.edt!, 0.48, accuracy: 1e-9)
+    }
+
+    func testParseRealisticEuropeanREWRT60Export() throws {
+        // Faithful replica of a real REW RT60 text export from a machine with
+        // a European (comma-decimal) locale: * header block, tab-separated
+        // columns with unit suffixes, comma decimals, Topt column present.
+        let text = "* Measurement: Wohnzimmer Position A\n"
+            + "* Dated: 22.08.2026 20:15:03\n"
+            + "* REW Version: 5.31.3\n"
+            + "* Source: USB, UMIK-1\n"
+            + "* Note: RT60 decay data\n"
+            + "Band (Hz)\tEDT (s)\tT20 (s)\tT30 (s)\tTopt (s)\n"
+            + "   50,0\t  0,834\t  0,712\t  0,698\t  0,705\n"
+            + "  125,0\t  0,624\t  0,581\t  0,602\t  0,595\n"
+            + "  500,0\t  0,483\t  0,451\t  0,469\t  0,462\n"
+            + " 1000,0\t  0,442\t  0,421\t  0,433\t  0,428\n"
+            + " 4000,0\t  0,398\t  0,388\t  0,395\t  0,391\n"
+
+        let rows = try REWImport.parseRT60(text: text)
+        XCTAssertEqual(rows.count, 5)
+
+        let band500 = rows.first { $0.bandCenter == 500 }
+        XCTAssertNotNil(band500)
+        // Column mapping must survive the "(s)" unit suffixes: T20 is column
+        // index 2, not wherever "(s)" tokens would push it.
+        XCTAssertEqual(band500!.edt!, 0.483, accuracy: 1e-9)
+        XCTAssertEqual(band500!.t20!, 0.451, accuracy: 1e-9)
+        XCTAssertEqual(band500!.t30!, 0.469, accuracy: 1e-9)
+
+        let band50 = rows.first { $0.bandCenter == 50 }
+        XCTAssertEqual(band50!.t30!, 0.698, accuracy: 1e-9)
     }
 
     func testParseSemicolonSeparatedEuropeanFrequencyResponse() throws {

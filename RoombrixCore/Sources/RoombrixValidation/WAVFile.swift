@@ -95,29 +95,57 @@ public enum WAVFile {
         return Audio(samples: samples, sampleRate: Double(sampleRate))
     }
 
-    // MARK: - Writing (32-bit float mono; used for stimulus export + fixtures)
+    // MARK: - Writing (mono; stimulus export + fixtures)
 
-    public static func writeFloat32Mono(samples: [Double], sampleRate: Double, to url: URL) throws {
+    private static func header(
+        formatTag: UInt16, sampleRate: Double, bytesPerSample: Int, sampleCount: Int
+    ) -> Data {
         var data = Data()
-        let byteRate = UInt32(sampleRate) * 4
-        let dataSize = UInt32(samples.count * 4)
-
+        let dataSize = UInt32(sampleCount * bytesPerSample)
         data.append(contentsOf: "RIFF".utf8)
         appendUInt32(&data, 36 + dataSize)
         data.append(contentsOf: "WAVE".utf8)
         data.append(contentsOf: "fmt ".utf8)
         appendUInt32(&data, 16)
-        appendUInt16(&data, 3) // IEEE float
+        appendUInt16(&data, formatTag)
         appendUInt16(&data, 1) // mono
         appendUInt32(&data, UInt32(sampleRate))
-        appendUInt32(&data, byteRate)
-        appendUInt16(&data, 4) // block align
-        appendUInt16(&data, 32) // bits
+        appendUInt32(&data, UInt32(sampleRate) * UInt32(bytesPerSample))
+        appendUInt16(&data, UInt16(bytesPerSample)) // block align
+        appendUInt16(&data, UInt16(bytesPerSample * 8))
         data.append(contentsOf: "data".utf8)
         appendUInt32(&data, dataSize)
+        return data
+    }
+
+    public static func writeFloat32Mono(samples: [Double], sampleRate: Double, to url: URL) throws {
+        var data = header(formatTag: 3, sampleRate: sampleRate, bytesPerSample: 4, sampleCount: samples.count)
         for s in samples {
             var v = Float(s).bitPattern.littleEndian
             withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
+        }
+        try data.write(to: url)
+    }
+
+    public static func writePCM24Mono(samples: [Double], sampleRate: Double, to url: URL) throws {
+        var data = header(formatTag: 1, sampleRate: sampleRate, bytesPerSample: 3, sampleCount: samples.count)
+        for s in samples {
+            let clamped = max(-1.0, min(1.0, s))
+            let v = Int32((clamped * 8_388_607.0).rounded())
+            data.append(UInt8(truncatingIfNeeded: v))
+            data.append(UInt8(truncatingIfNeeded: v >> 8))
+            data.append(UInt8(truncatingIfNeeded: v >> 16))
+        }
+        try data.write(to: url)
+    }
+
+    public static func writePCM16Mono(samples: [Double], sampleRate: Double, to url: URL) throws {
+        var data = header(formatTag: 1, sampleRate: sampleRate, bytesPerSample: 2, sampleCount: samples.count)
+        for s in samples {
+            let clamped = max(-1.0, min(1.0, s))
+            let v = Int16((clamped * 32_767.0).rounded())
+            data.append(UInt8(truncatingIfNeeded: v))
+            data.append(UInt8(truncatingIfNeeded: v >> 8))
         }
         try data.write(to: url)
     }

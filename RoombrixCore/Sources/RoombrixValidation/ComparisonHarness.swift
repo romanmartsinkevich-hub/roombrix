@@ -18,7 +18,10 @@ public enum ComparisonHarness {
     public struct Report: Sendable {
         public let bands: [BandComparison]
         public let tolerance: Double
-        /// Acceptance verdict over the criteria bands (500 Hz–2 kHz).
+        /// The frequency range the pass/fail verdict is evaluated over.
+        /// Bands outside it are reported as informational.
+        public let criteriaBands: ClosedRange<Double>
+        /// Acceptance verdict over the criteria bands.
         public let passed: Bool
 
         public var summary: String {
@@ -31,29 +34,34 @@ public enum ComparisonHarness {
                 let err = b.relativeError.map { String(format: "%+.1f %%", $0 * 100) } ?? "—"
                 let status: String
                 switch b.withinTolerance {
-                case .some(true): status = "PASS"
-                case .some(false): status = "FAIL"
-                case .none: status = "n/a"
+                case .some(let within) where criteriaBands.contains(b.bandCenter):
+                    status = within ? "PASS" : "FAIL"
+                case .some(let within):
+                    status = within ? "info (ok)" : "info (off)"
+                case .none:
+                    status = "n/a"
                 }
                 lines.append(String(
-                    format: "%9.0f | %13@ | %8@ | %5@ | %@",
+                    format: "%9.0f | %13@ | %8@ | %6@ | %@",
                     b.bandCenter, ours as NSString, ref as NSString, err as NSString, status
                 ))
             }
+            let range = "\(Int(criteriaBands.lowerBound))–\(Int(criteriaBands.upperBound)) Hz"
             lines.append(passed
-                ? "RESULT: PASS (all criteria bands within ±\(Int(tolerance * 100)) %)"
-                : "RESULT: FAIL")
+                ? "RESULT: PASS (all \(range) bands within ±\(Int(tolerance * 100)) %)"
+                : "RESULT: FAIL (one or more \(range) bands outside ±\(Int(tolerance * 100)) %)")
             return lines.joined(separator: "\n")
         }
     }
 
-    /// Bands the acceptance criteria are evaluated on.
+    /// Default acceptance-criteria bands (brief §5.2: 500 Hz–2 kHz).
     public static let criteriaBands: ClosedRange<Double> = 500...2_000
 
     public static func compareRT60(
         roombrix: [ReverbTime.BandDecay],
         reference: [REWImport.RT60Row],
-        tolerance: Double = 0.15
+        tolerance: Double = 0.15,
+        criteriaBands: ClosedRange<Double> = ComparisonHarness.criteriaBands
     ) -> Report {
         var comparisons: [BandComparison] = []
         var allCriteriaPassed = true
@@ -93,6 +101,7 @@ public enum ComparisonHarness {
         return Report(
             bands: comparisons,
             tolerance: tolerance,
+            criteriaBands: criteriaBands,
             passed: criteriaEvaluated && allCriteriaPassed
         )
     }

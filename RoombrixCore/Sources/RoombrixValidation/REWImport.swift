@@ -81,10 +81,22 @@ public enum REWImport {
 
             let lower = trimmed.lowercased()
             if !headerFound, lower.contains("t20") || lower.contains("t30") || lower.contains("edt") {
-                let columns = trimmed
-                    .split(whereSeparator: { $0 == "\t" || $0 == "," || $0 == " " })
-                    .map { $0.lowercased() }
-                    .filter { !$0.isEmpty }
+                // Real REW headers are tab-separated with units, e.g.
+                // "Band (Hz)\tEDT (s)\tT20 (s)\tT30 (s)". Column indices must
+                // line up with the *numeric* fields of the data rows, so:
+                // tab-separated headers split on tabs (units stay inside
+                // their column token); space-separated headers additionally
+                // drop standalone unit tokens like "(s)".
+                let columns: [String]
+                if trimmed.contains("\t") {
+                    columns = trimmed.split(separator: "\t")
+                        .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                        .filter { !$0.isEmpty }
+                } else {
+                    columns = trimmed.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == " " })
+                        .map { $0.lowercased() }
+                        .filter { !$0.isEmpty && !$0.hasPrefix("(") }
+                }
                 for (i, name) in columns.enumerated() {
                     if name.contains("edt") { edtColumn = i }
                     if name.contains("t20") { t20Column = i }

@@ -60,8 +60,8 @@ final class ReverbTimeTests: XCTestCase {
         )
         let decays = ReverbTime.analyze(ir, bands: [125, 250, 500, 1_000, 2_000])
 
-        let lf125 = decays.first { $0.centerFrequency == 125 }.flatMap(ReverbTime.bestEstimate)
-        let mid1k = decays.first { $0.centerFrequency == 1_000 }.flatMap(ReverbTime.bestEstimate)
+        let lf125 = decays.first { $0.centerFrequency == 125 }.flatMap { ReverbTime.bestEstimate($0) }
+        let mid1k = decays.first { $0.centerFrequency == 1_000 }.flatMap { ReverbTime.bestEstimate($0) }
         XCTAssertNotNil(lf125)
         XCTAssertNotNil(mid1k)
         XCTAssertGreaterThan(lf125!, mid1k! * 1.4, "LF decay clearly longer than mid")

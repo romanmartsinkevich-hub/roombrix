@@ -98,15 +98,25 @@ public enum ReverbTime {
     }
 
     /// Preferred single RT60 figure per band: T30 when available, else T20.
-    public static func bestEstimate(_ band: BandDecay) -> Double? {
-        band.t30 ?? band.t20
+    ///
+    /// Bands whose decay fit is poor (low r² — noise-dominated or heavily
+    /// modal) return nil rather than a number: a garbage LF band would
+    /// otherwise poison the LF/mid ratio and trigger false bass diagnoses.
+    public static func bestEstimate(
+        _ band: BandDecay,
+        minimumFitQuality: Double = 0.8
+    ) -> Double? {
+        if let quality = band.t20FitQuality, quality < minimumFitQuality {
+            return nil
+        }
+        return band.t30 ?? band.t20
     }
 
     /// Mid-band RT60 (mean of 500 Hz and 1 kHz), the conventional headline figure.
     public static func midBandRT60(_ bands: [BandDecay]) -> Double? {
         let mids = bands
             .filter { $0.centerFrequency == 500 || $0.centerFrequency == 1_000 }
-            .compactMap(bestEstimate)
+            .compactMap { bestEstimate($0) }
         guard !mids.isEmpty else { return nil }
         return mids.reduce(0, +) / Double(mids.count)
     }
@@ -116,7 +126,7 @@ public enum ReverbTime {
     public static func lowToMidDecayRatio(_ bands: [BandDecay]) -> Double? {
         let lf = bands
             .filter { $0.centerFrequency <= 250 }
-            .compactMap(bestEstimate)
+            .compactMap { bestEstimate($0) }
         guard let mid = midBandRT60(bands), mid > 0, !lf.isEmpty else { return nil }
         return (lf.reduce(0, +) / Double(lf.count)) / mid
     }
