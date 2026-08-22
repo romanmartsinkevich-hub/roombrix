@@ -1,0 +1,79 @@
+import Foundation
+
+/// Schroeder backward integration: turns a (band-filtered) impulse response
+/// into an energy decay curve (EDC), the input to all RT estimates.
+public enum SchroederIntegration {
+
+    public struct DecayCurve: Sendable {
+        /// EDC in dB relative to total energy (starts at 0, decreases).
+        public let levelsDB: [Double]
+        public let sampleRate: Double
+        /// Estimated noise floor relative to total energy, dB.
+        public let noiseFloorDB: Double
+        /// Index at which integration was truncated (noise-crossing point).
+        public let truncationIndex: Int
+    }
+
+    /// Compute the EDC with noise-floor truncation.
+    ///
+    /// Integrating a full noisy tail biases RT long, so we estimate the noise
+    /// level from the final segment of the squared response and truncate the
+    /// integration where the smoothed decay meets noise + margin (a simplified
+    /// Lundeby procedure — adequate for v1, revisit against the REW harness).
+    public static func decayCurve(
+        of samples: [Double],
+        sampleRate: Double,
+        noiseMarginDB: Double = 8
+    ) -> DecayCurve {
+        precondition(!samples.isEmpty)
+        let squared = samples.map { $0 * $0 }
+        let totalEnergy = squared.reduce(0, +)
+        guard totalEnergy > 0 else {
+            return DecayCurve(
+                levelsDB: [Double](repeating: -120, count: samples.count),
+                sampleRate: sampleRate,
+                noiseFloorDB: -120,
+                truncationIndex: samples.count
+            )
+        }
+
+        // Noise estimate from the last 10 % of the response.
+        let tailStart = max(0, squared.count - squared.count / 10)
+        let tail = squared[tailStart...]
+        let noisePower = tail.reduce(0, +) / Double(max(tail.count, 1))
+        let meanPower = totalEnergy / Double(squared.count)
+        let noiseFloorDB = 10 * log10(max(noisePower / meanPower, 1e-14))
+
+        // Smoothed level in 10 ms blocks to find the noise-crossing point.
+        let block = max(1, Int(0.01 * sampleRate))
+        var truncationIndex = squared.count
+        var i = 0
+        while i + block <= squared.count {
+            let blockPower = squared[i..<(i + block)].reduce(0, +) / Double(block)
+            let blockDB = 10 * log10(max(blockPower / meanPower, 1e-14))
+            if blockDB <= noiseFloorDB + noiseMarginDB && i > 0 {
+                truncationIndex = i
+                break
+            }
+            i += block
+        }
+
+        // Backward integration up to the truncation point.
+        var edc = [Double](repeating: -120, count: squared.count)
+        var running = 0.0
+        for j in stride(from: truncationIndex - 1, through: 0, by: -1) {
+            running += squared[j]
+            edc[j] = running
+        }
+        let reference = edc[0]
+        for j in 0..<truncationIndex {
+            edc[j] = 10 * log10(max(edc[j] / reference, 1e-14))
+        }
+        return DecayCurve(
+            levelsDB: edc,
+            sampleRate: sampleRate,
+            noiseFloorDB: noiseFloorDB,
+            truncationIndex: truncationIndex
+        )
+    }
+}
