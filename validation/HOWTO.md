@@ -25,10 +25,16 @@ the agent in its environment.
 
 | Setting | Value |
 |---|---|
-| Format | WAV |
+| Format | WAV, or QuickTime Player recordings as **.aifc** / **.m4a** (lossless) — decoded automatically on the analysis side |
 | Sample rate | 48 kHz preferred; 44.1 kHz is also fine |
 | Bit depth | 24-bit preferred; 16-bit or 32-bit float also fine |
 | Channels | mono or stereo — both work (the left channel is used) |
+
+**QuickTime Player (macOS):** File → New Audio Recording, click the small
+arrow next to the record button, choose your microphone and quality
+**Maximum** (lossless). Save the resulting file as-is — no conversion needed.
+Lossy formats (AAC "High" quality, MP3) are not acceptable for measurement;
+if in doubt, pick Maximum.
 
 ## Step by step
 
@@ -57,6 +63,9 @@ validation/recordings/YYYY-MM-DD_room_positionA_take1.wav
 ```
 
 Example: `validation/recordings/2026-08-23_livingroom_positionA_take1.wav`
+
+Only the extension changes with the format — e.g.
+`2026-08-23_livingroom_positionA_take1.aifc` for a QuickTime recording.
 
 The REW reference for the same room and position goes here:
 

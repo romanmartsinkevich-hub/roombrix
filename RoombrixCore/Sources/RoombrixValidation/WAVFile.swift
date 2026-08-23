@@ -53,6 +53,15 @@ public enum WAVFile {
                 channels = Int(readUInt16(data, body + 2))
                 sampleRate = Int(readUInt32(data, body + 4))
                 bitsPerSample = Int(readUInt16(data, body + 14))
+                // WAVE_FORMAT_EXTENSIBLE: the real format is the first two
+                // bytes of the SubFormat GUID at offset 24 of the fmt body
+                // (1 = PCM, 3 = IEEE float). ffmpeg emits this for f32 output.
+                if formatTag == 0xFFFE {
+                    guard chunkSize >= 40, body + 26 <= data.count else {
+                        throw WAVError.unsupportedFormat("extensible fmt chunk too short")
+                    }
+                    formatTag = Int(readUInt16(data, body + 24))
+                }
             case "data":
                 let end = min(body + chunkSize, data.count)
                 sampleData = data.subdata(in: body..<end)
@@ -71,9 +80,8 @@ public enum WAVFile {
         let frameCount = payload.count / frameSize
         var samples = [Double](repeating: 0, count: frameCount)
 
-        // WAVE_FORMAT_EXTENSIBLE (0xFFFE) is treated by bit depth.
+        // formatTag has been resolved through the EXTENSIBLE SubFormat above.
         let isFloat = formatTag == 3
-            || (formatTag == 0xFFFE && (bitsPerSample == 32 || bitsPerSample == 64) && false)
 
         for frame in 0..<frameCount {
             let p = frame * frameSize  // first channel only

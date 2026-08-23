@@ -43,6 +43,43 @@ final class ValidationTests: XCTestCase {
         }
     }
 
+    func testWAVExtensibleFloat32() throws {
+        // WAVE_FORMAT_EXTENSIBLE (0xFFFE) with an IEEE-float SubFormat GUID —
+        // what ffmpeg writes for pcm_f32le. Regression: this used to be read
+        // as int32 PCM, silently producing garbage samples.
+        let samples: [Float] = (0..<200).map { sin(2 * .pi * 500 * Float($0) / 48_000) * 0.7 }
+        var data = Data()
+        func u16(_ v: UInt16) { var le = v.littleEndian; withUnsafeBytes(of: &le) { data.append(contentsOf: $0) } }
+        func u32(_ v: UInt32) { var le = v.littleEndian; withUnsafeBytes(of: &le) { data.append(contentsOf: $0) } }
+        let dataSize = UInt32(samples.count * 4)
+        data.append(contentsOf: "RIFF".utf8); u32(60 + dataSize)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8); u32(40)
+        u16(0xFFFE); u16(1)          // extensible, mono
+        u32(48_000); u32(48_000 * 4)
+        u16(4); u16(32)              // block align, bits
+        u16(22)                      // cbSize
+        u16(32)                      // valid bits
+        u32(0x4)                     // channel mask
+        // SubFormat GUID: KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+        // {00000003-0000-0010-8000-00AA00389B71} — first two bytes carry the tag.
+        u16(3); u16(0)
+        data.append(contentsOf: [0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
+                                 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71])
+        data.append(contentsOf: "data".utf8); u32(dataSize)
+        for s in samples {
+            var v = s.bitPattern.littleEndian
+            withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
+        }
+
+        let audio = try WAVFile.parse(data: data)
+        XCTAssertEqual(audio.sampleRate, 48_000)
+        XCTAssertEqual(audio.samples.count, samples.count)
+        for (a, b) in zip(audio.samples, samples) {
+            XCTAssertEqual(a, Double(b), accuracy: 1e-7)
+        }
+    }
+
     func testWAVStereoUsesLeftChannel() throws {
         // Hand-built 16-bit stereo file: left = ramp, right = constant.
         let frames = 100

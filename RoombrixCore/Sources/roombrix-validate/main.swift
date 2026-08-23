@@ -7,11 +7,13 @@ import RoombrixValidation
 //
 // Commands:
 //
-//   measure <recording.wav> [--rew <rt60-export.txt>] [--duration 10]
+//   measure <recording> [--rew <rt60-export.txt>] [--duration 10]
 //       Full pipeline on a RAW recording of the played stimulus:
 //       sanity checks (clipping, length, marker confidence, SNR) →
 //       alignment → deconvolution → per-band EDT/T20/T30 → optional REW diff
 //       (pass/fail over 250 Hz–4 kHz, informational below 250 Hz).
+//       Accepts WAV natively; .aifc/.m4a (ALAC)/.aiff/.caf/.flac are decoded
+//       losslessly via ffmpeg (or afconvert on macOS).
 //
 //   rt60 <ir.wav> [--rew <rt60-export.txt>]
 //       Analyze an already-deconvolved impulse response.
@@ -76,23 +78,26 @@ let args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else {
     fail("""
     Usage:
-      roombrix-validate measure <recording.wav> [--rew <rt60-export.txt>] [--duration 10]
-      roombrix-validate rt60 <ir.wav> [--rew <rt60-export.txt>]
+      roombrix-validate measure <recording.wav|.aifc|.m4a> [--rew <rt60-export.txt>] [--duration 10]
+      roombrix-validate rt60 <ir.wav|.aifc|.m4a> [--rew <rt60-export.txt>]
       roombrix-validate stimulus <output.wav> [--duration 10] [--rate 48000] [--bits 24] [--tail 5] [--peak-dbfs -6] [--end-marker]
     """)
 }
 
 switch command {
 case "measure":
-    guard args.count >= 2 else { fail("measure: missing <recording.wav> argument") }
+    guard args.count >= 2 else { fail("measure: missing <recording> argument") }
     let url = URL(fileURLWithPath: args[1])
     let sweepDuration = flagValue("--duration", in: args).flatMap(Double.init) ?? 10
 
     let audio: WAVFile.Audio
     do {
-        audio = try WAVFile.read(url: url)
+        audio = try AudioLoader.load(url: url)
     } catch {
         fail("Could not read \(url.path): \(error)")
+    }
+    if url.pathExtension.lowercased() != "wav" {
+        print("Input .\(url.pathExtension.lowercased()) decoded losslessly to PCM for analysis.")
     }
     let fs = audio.sampleRate
     let recording = audio.samples
@@ -205,11 +210,11 @@ case "measure":
     }
 
 case "rt60":
-    guard args.count >= 2 else { fail("rt60: missing <ir.wav> argument") }
+    guard args.count >= 2 else { fail("rt60: missing <ir> argument") }
     let url = URL(fileURLWithPath: args[1])
     let audio: WAVFile.Audio
     do {
-        audio = try WAVFile.read(url: url)
+        audio = try AudioLoader.load(url: url)
     } catch {
         fail("Could not read \(url.path): \(error)")
     }
