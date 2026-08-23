@@ -206,6 +206,48 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(band50!.t30!, 0.698, accuracy: 1e-9)
     }
 
+    func testParseREWv540RT60Export() throws {
+        // Verbatim structure of a real REW V5.40 Beta export (as uploaded to
+        // validation/rew/): prose header WITHOUT '*' prefixes, a "Format is"
+        // column-description line, data rows with non-numeric column tokens
+        // ("1/3", "Forward"), and a trailing "full" summary row.
+        let text = """
+        RT60 data saved by REW V5.40 Beta 133
+        Note: measure 1
+        Source: OmniMic, No name 1, R, Volume: 1.000
+        Dated: Aug 23, 2026, 6:15:16 PM
+        Measurement: R Aug 23_1
+        Sweep level: -12.0 dBFS
+        Response measured over: 0.4 to 19,999.9 Hz
+        Peak value: 0.0021381665 at index 48000
+        Response length: 131072 samples
+        Sample interval: 2.0833333333333333E-5 seconds
+        Start time: -0.9999999993401905 seconds
+
+        Format is freq (Hz), BW (octaves), EDT (s), r, T20 (s), r, T30 (s), r, Topt (s), r, ToptStart (dB), ToptEnd (dB), T60M (s), reverse/forward/zero phase filtered, C50 (dB), C80 (dB), C20 (dB), D50 (%), TS (s)
+
+        50 1/3 2.067 -0.976 1.516 -0.983 1.610 -0.993 1.610 -0.994 -5.000 -39.000 0.000 Forward 0.85 1.09 0.03 54.9 0.140
+        500 1/3 0.181 -0.913 0.672 -0.984 0.731 -0.990 0.789 -0.997 -11.000 -51.000 0.000 Forward 12.88 16.39 9.08 95.1 0.017
+        1000 1/3 0.706 -0.956 0.623 -0.995 0.668 -0.995 0.640 -0.997 -5.000 -33.000 0.000 Forward 6.24 9.40 3.26 80.8 0.028
+
+        full 1/3 0.425 -0.979 0.690 -0.991 0.812 -0.993 0.534 -0.998 -5.000 -17.000 0.000 Forward 10.07 13.00 5.38 91.0 0.015
+        """
+
+        let rows = try REWImport.parseRT60(text: text)
+        // Exactly the 3 band rows: prose lines and the "full" row must not
+        // become junk rows (e.g. "Dated: Aug 23, 2026" parsing as band 23).
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertEqual(rows.map(\.bandCenter), [50, 500, 1_000])
+
+        let band500 = rows[1]
+        XCTAssertEqual(band500.edt!, 0.181, accuracy: 1e-9)
+        XCTAssertEqual(band500.t20!, 0.672, accuracy: 1e-9)
+        XCTAssertEqual(band500.t30!, 0.731, accuracy: 1e-9)
+
+        let band50 = rows[0]
+        XCTAssertEqual(band50.t30!, 1.610, accuracy: 1e-9)
+    }
+
     func testParseSemicolonSeparatedEuropeanFrequencyResponse() throws {
         let text = """
         * Measurement data measured by REW V5.20 (European locale)

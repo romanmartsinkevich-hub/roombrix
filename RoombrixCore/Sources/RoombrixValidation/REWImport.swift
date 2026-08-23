@@ -72,21 +72,54 @@ public enum REWImport {
         var edtColumn: Int?
         var t20Column: Int?
         var t30Column: Int?
-        var headerFound = false
+        // Two header dialects exist:
+        // - REW V5.40+: a prose block (no '*' prefixes) followed by a
+        //   "Format is freq (Hz), BW (octaves), EDT (s), r, T20 (s), r, …"
+        //   description line; data rows are whitespace-separated and contain
+        //   non-numeric tokens ("1/3", "Forward") that count as columns.
+        // - Older/tabular: a "Band  EDT  T20  T30" header row (tab- or
+        //   space-separated, optionally with unit suffixes).
+        enum HeaderStyle { case none, tabular, formatLine }
+        var style = HeaderStyle.none
+        var freqColumn = 0
+
+        /// Parse one token as a number, accepting European decimal commas.
+        func number(_ token: any StringProtocol) -> Double? {
+            if let v = Double(token) { return v }
+            if token.contains(","), !token.contains(".") {
+                return Double(token.replacingOccurrences(of: ",", with: "."))
+            }
+            return nil
+        }
 
         var rows: [RT60Row] = []
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty, !trimmed.hasPrefix("*"), !trimmed.hasPrefix("#") else { continue }
-
             let lower = trimmed.lowercased()
-            if !headerFound, lower.contains("t20") || lower.contains("t30") || lower.contains("edt") {
-                // Real REW headers are tab-separated with units, e.g.
-                // "Band (Hz)\tEDT (s)\tT20 (s)\tT30 (s)". Column indices must
-                // line up with the *numeric* fields of the data rows, so:
-                // tab-separated headers split on tabs (units stay inside
-                // their column token); space-separated headers additionally
-                // drop standalone unit tokens like "(s)".
+
+            // V5.40-style column-description line. Names are comma-separated
+            // and align 1:1 with whitespace-separated data-row tokens.
+            if style == .none, lower.hasPrefix("format is") {
+                let names = lower.dropFirst("format is".count)
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                for (i, name) in names.enumerated() {
+                    if name.hasPrefix("freq") || name.hasPrefix("band") { freqColumn = i }
+                    if name.hasPrefix("edt"), edtColumn == nil { edtColumn = i }
+                    if name.hasPrefix("t20"), t20Column == nil { t20Column = i }
+                    if name.hasPrefix("t30"), t30Column == nil { t30Column = i }
+                }
+                style = .formatLine
+                continue
+            }
+
+            // Tabular header row, e.g. "Band (Hz)\tEDT (s)\tT20 (s)\tT30 (s)".
+            // Column indices must line up with the *numeric* fields of the
+            // data rows: tab-separated headers split on tabs (units stay
+            // inside their column token); space-separated headers drop
+            // standalone unit tokens like "(s)".
+            if style == .none, lower.contains("t20") || lower.contains("t30") || lower.contains("edt") {
                 let columns: [String]
                 if trimmed.contains("\t") {
                     columns = trimmed.split(separator: "\t")
@@ -102,23 +135,52 @@ public enum REWImport {
                     if name.contains("t20") { t20Column = i }
                     if name.contains("t30") { t30Column = i }
                 }
-                headerFound = true
+                style = .tabular
                 continue
             }
 
-            let fields = numericFields(of: trimmed)
-            guard fields.count >= 2 else { continue }
-            func pick(_ column: Int?) -> Double? {
-                guard let column, column < fields.count else { return nil }
-                let v = fields[column]
-                return v > 0 ? v : nil
+            // Prose metadata ("Dated: …", "Peak value: … at index …",
+            // "Response measured over: 0.4 to 19,999.9 Hz") is never data.
+            // Data rows in every known dialect are colon-free.
+            if trimmed.contains(":") { continue }
+
+            switch style {
+            case .formatLine:
+                // Token-indexed: non-numeric tokens ("1/3", "Forward") hold
+                // their column position. The "full" summary row has a
+                // non-numeric frequency and is skipped.
+                let tokens = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" })
+                guard freqColumn < tokens.count,
+                      let freq = number(tokens[freqColumn]), freq > 0
+                else { continue }
+                func pick(_ column: Int?) -> Double? {
+                    guard let column, column < tokens.count,
+                          let v = number(tokens[column]), v > 0 else { return nil }
+                    return v
+                }
+                rows.append(RT60Row(
+                    bandCenter: freq,
+                    edt: pick(edtColumn),
+                    t20: pick(t20Column),
+                    t30: pick(t30Column)
+                ))
+
+            case .tabular, .none:
+                let fields = numericFields(of: trimmed)
+                guard fields.count >= 2, fields[0] > 0 else { continue }
+                func pick(_ column: Int?) -> Double? {
+                    guard let column, column < fields.count else { return nil }
+                    let v = fields[column]
+                    return v > 0 ? v : nil
+                }
+                rows.append(RT60Row(
+                    bandCenter: fields[0],
+                    edt: pick(edtColumn),
+                    // Headerless two-column files: treat the second number as RT.
+                    t20: pick(t20Column) ?? (style == .none ? fields[1] : nil),
+                    t30: pick(t30Column)
+                ))
             }
-            rows.append(RT60Row(
-                bandCenter: fields[0],
-                edt: pick(edtColumn),
-                t20: pick(t20Column) ?? (fields.count > 1 && !headerFound ? fields[1] : pick(t20Column)),
-                t30: pick(t30Column)
-            ))
         }
         guard !rows.isEmpty else { throw ImportError.noParsableRows }
         return rows
