@@ -38,10 +38,19 @@ Verification protocol per device:
 ## Internal-mic correction curves
 
 Generic per-model correction curves (labeled "estimated" in the UI) ship as
-a data table keyed by `Correction curve id`. Open question #2 in the brief:
-license per-model data, measure in-house against UMIK-1, or crowd-calibrate.
-Decision due end of Sprint 0. Relative metrics (RT60, C50/C80, decay ratios)
-do not depend on these curves — only absolute FR shape does.
+a data table keyed by `Correction curve id`. Relative metrics (RT60, C50/C80,
+decay ratios) do not depend on these curves — only FR shape does; calibration
+is never applied to decay metrics (see `MicrophoneCalibration`).
+
+**Substitution method (how built-in curves are generated):** a reference
+omnidirectional measurement microphone (with its own calibration file loaded)
+and the phone are placed at the same position, and both record the same
+stimulus played through the same system, back to back. Both magnitude
+responses are computed with identical smoothing (1/3 octave); the phone's
+correction curve is the difference `phone response − reference response`,
+smoothed and clamped outside 40 Hz–16 kHz where phone data becomes
+unreliable. Repeat over ≥ 3 units per model where possible; ship the median
+curve and note unit spread in this table.
 
 ## External calibrated mics (Pro tier)
 

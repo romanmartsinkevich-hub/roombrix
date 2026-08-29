@@ -35,11 +35,12 @@ final class ReverbTimeTests: XCTestCase {
     }
 
     func testRobustToNoiseFloor() {
-        // −45 dB noise floor: T30 range (−5…−35) sits right at the edge, so
-        // noise truncation must engage for the estimate to stay honest.
+        // −55 dB sample noise (EDC plateau ≈ −40 dB): T30 conditions are not
+        // met, adaptive selection falls back to T20, and the estimate must
+        // stay accurate despite the noise.
         let trueRT = 0.4
         let ir = SyntheticIR.exponentialDecay(
-            rt60: trueRT, duration: 1.5, sampleRate: fs, noiseFloorDB: -45
+            rt60: trueRT, duration: 1.5, sampleRate: fs, noiseFloorDB: -55
         )
         let decays = ReverbTime.analyze(ir, bands: [500, 1_000])
         for band in decays {
@@ -82,6 +83,49 @@ final class ReverbTimeTests: XCTestCase {
         for i in 1..<curve.truncationIndex {
             XCTAssertLessThanOrEqual(curve.levelsDB[i], curve.levelsDB[i - 1] + 1e-12)
         }
+    }
+
+    func testAdaptiveMetricSelectionWithLimitedRange() {
+        // Sample noise at −58 dB puts the EDC noise plateau at ≈ −43 dB:
+        // the T30 fit endpoint (−35 dB) has only ~8 dB of margin, biasing
+        // T30 long. Adaptive selection must fall back to T20 and land within
+        // 15 % of ground truth. (Observed identically on a real iPhone
+        // recording: 500 Hz T30 read +19 % vs REW while T20 read +3 %.)
+        let trueRT = 0.5
+        let ir = SyntheticIR.exponentialDecay(
+            rt60: trueRT, duration: 1.5, sampleRate: fs, noiseFloorDB: -58
+        )
+        let decays = ReverbTime.analyze(ir, bands: [500, 1_000])
+        for band in decays {
+            XCTAssertNotNil(band.usableDecayRangeDB)
+            XCTAssertLessThan(band.usableDecayRangeDB!, 40, "range must be T20 territory")
+            XCTAssertGreaterThanOrEqual(band.usableDecayRangeDB!, 25)
+            XCTAssertEqual(band.selectedMetric, .t20, "T20 selected when 25–40 dB available")
+            guard let rt = ReverbTime.bestEstimate(band) else {
+                XCTFail("band \(band.centerFrequency) should still be measurable via T20")
+                continue
+            }
+            XCTAssertEqual(rt, band.t20!, "estimate must be the T20 figure")
+            XCTAssertEqual(rt, trueRT, accuracy: trueRT * 0.15)
+        }
+    }
+
+    func testAdaptiveMetricUsesT30WhenRangeAllows() {
+        let ir = SyntheticIR.exponentialDecay(rt60: 0.5, duration: 1.5, sampleRate: fs)
+        let decays = ReverbTime.analyze(ir, bands: [500, 1_000])
+        for band in decays {
+            XCTAssertGreaterThanOrEqual(band.usableDecayRangeDB ?? 0, 40)
+            XCTAssertEqual(band.selectedMetric, .t30)
+        }
+    }
+
+    func testUnmeasurableBelow25dBRange() {
+        let band = ReverbTime.BandDecay(
+            centerFrequency: 63, t20: 0.9, t30: 1.2, edt: nil,
+            t20FitQuality: 0.95, t30FitQuality: 0.95, usableDecayRangeDB: 20
+        )
+        XCTAssertEqual(band.selectedMetric, .unmeasurable)
+        XCTAssertNil(ReverbTime.bestEstimate(band))
     }
 
     func testBestEstimateGating() {

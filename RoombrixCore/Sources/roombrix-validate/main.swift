@@ -45,13 +45,20 @@ func hasFlag(_ name: String, in args: [String]) -> Bool {
 }
 
 func printDecayTable(_ decays: [ReverbTime.BandDecay]) {
-    print("Band (Hz) |   EDT   |   T20   |   T30   |  fit r²")
-    print("----------|---------|---------|---------|--------")
+    print("Band (Hz) |   EDT   |   T20   |   T30   |  fit r² | Range | Metric used")
+    print("----------|---------|---------|---------|---------|-------|------------")
     for d in decays {
         func fmt(_ v: Double?) -> String { v.map { String(format: "%.3f s", $0) } ?? "   —   " }
         let quality = d.t20FitQuality.map { String(format: "%.3f", $0) } ?? "  —  "
-        print(String(format: "%9.0f | %@ | %@ | %@ | %@",
-                     d.centerFrequency, fmt(d.edt), fmt(d.t20), fmt(d.t30), quality))
+        let range = d.usableDecayRangeDB.map { String(format: "%2.0f dB", $0) } ?? "  —  "
+        let metric: String
+        switch d.selectedMetric {
+        case .t30: metric = "T30"
+        case .t20: metric = "T20 (range-limited)"
+        case .unmeasurable: metric = "unmeasurable"
+        }
+        print(String(format: "%9.0f | %@ | %@ | %@ | %@   | %@ | %@",
+                     d.centerFrequency, fmt(d.edt), fmt(d.t20), fmt(d.t30), quality, range, metric))
     }
 }
 
@@ -149,8 +156,12 @@ case "measure":
 
     // --- Marker detection -----------------------------------------------------
     let spacing = TimingReference.expectedMarkerSpacing(marker: marker, payloadCount: sweep.samples.count)
+    // Plausibility gate 1: the marker must leave room for guard + sweep.
+    let requiredTrailing = marker.samples.count + guardSamples + sweep.samples.count
     guard let detection = TimingReference.detect(
-        marker: marker, in: recording, expectedMarkerSpacing: spacing
+        marker: marker, in: recording,
+        expectedMarkerSpacing: spacing,
+        requiredTrailingSamples: requiredTrailing
     ) else {
         fail("Recording is shorter than the timing marker — this file does not contain a measurement.")
     }
@@ -166,8 +177,32 @@ case "measure":
     }
     print(String(format: "Marker found %.3f s into the recording (detected playback latency/offset)",
                  Double(detection.markerStartIndex) / fs))
+    // Plausibility gate 2 (quiet precedence): a true start marker follows
+    // silence. Confidence alone cannot catch a confident false lock.
+    if let quiet = detection.preMarkerQuietDB {
+        print(String(format: "Pre-marker quiet check: marker is %.1f dB above the preceding region (minimum %.0f dB)",
+                     quiet, TimingReference.minimumPreMarkerQuietDB))
+        if quiet < TimingReference.minimumPreMarkerQuietDB {
+            fail("""
+            The detected marker is not preceded by a quiet region — either the
+            recording started mid-playback or the detector locked onto the wrong
+            spot. Start recording BEFORE playing the stimulus, with 2–3 seconds
+            of silence first, and record again.
+            """)
+        }
+    }
+    // Plausibility gate 3 (spacing consistency): when both markers exist,
+    // their spacing must match the stimulus within physical clock tolerances.
     if let drift = detection.clockDriftPPM {
         print(String(format: "Clock drift (playback vs capture): %+.0f ppm", drift))
+        if abs(drift) > TimingReference.maximumPlausibleDriftPPM {
+            fail(String(format: """
+            Start/end marker spacing is inconsistent with the stimulus duration
+            (implied clock drift %+.0f ppm; anything beyond ±%.0f ppm is not a
+            real clock — it is a detection failure). Re-record, and check that
+            the playback did not stutter or drop out.
+            """, drift, TimingReference.maximumPlausibleDriftPPM))
+        }
     }
 
     // --- SNR estimate ---------------------------------------------------------

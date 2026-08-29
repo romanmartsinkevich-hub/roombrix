@@ -87,10 +87,13 @@ final class ClarityAndDetectionTests: XCTestCase {
 
     func testFullPipelineOnHostileRealisticIR() {
         // Direct peak at a nonzero index, aperiodic early reflections,
-        // −55 dB noise floor, and a DC offset — all at once.
+        // −65 dB noise floor, and a DC offset — all at once. (−65 dB keeps
+        // the EDC noise plateau below −40 dB so the decay stays measurable
+        // under the adaptive-range policy; noisier captures are the
+        // unmeasurable-band tests' job.)
         let trueRT = 0.5
         let (ir, expectedDirectIndex) = SyntheticIR.realisticRoom(
-            rt60: trueRT, duration: 1.5, sampleRate: fs
+            rt60: trueRT, duration: 1.5, sampleRate: fs, noiseFloorDB: -65
         )
 
         // Peak auto-detection must land on the direct sound, not lead-in

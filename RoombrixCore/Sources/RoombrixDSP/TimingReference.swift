@@ -32,7 +32,20 @@ public struct TimingReference: Sendable {
         /// over the stimulus duration. Positive = playback clock runs slow
         /// relative to capture. v1 reports the drift; correction comes later.
         public let clockDriftPPM: Double?
+        /// How much louder the marker window is than the region immediately
+        /// before it, dB. A true start marker follows (near-)silence; a false
+        /// lock inside the sweep is preceded by loud signal, driving this
+        /// toward 0 or negative. nil when the marker sits too close to the
+        /// start of the recording to evaluate.
+        public let preMarkerQuietDB: Double?
     }
+
+    /// Plausibility gate: a detection whose marker window is not at least
+    /// this much louder than the preceding region should be rejected.
+    public static let minimumPreMarkerQuietDB = 6.0
+    /// Plausibility gate: start/end marker spacing implying more drift than
+    /// this is a detection failure, not a real clock offset.
+    public static let maximumPlausibleDriftPPM = 2_000.0
 
     /// Minimum confidence for a detection to be considered trustworthy.
     public static let minimumConfidenceDB = 12.0
@@ -93,14 +106,21 @@ public struct TimingReference: Sendable {
     /// Locate the marker in a recording via FFT cross-correlation.
     /// Returns nil when the recording is shorter than the marker.
     ///
-    /// - Parameter expectedMarkerSpacing: when the stimulus was assembled
-    ///   with an end marker, the known start-to-start marker distance in
-    ///   stimulus samples. The detector then searches for the end marker
-    ///   near that offset (±1 %) and reports the measured clock drift.
+    /// - Parameters:
+    ///   - expectedMarkerSpacing: when the stimulus was assembled with an end
+    ///     marker, the known start-to-start marker distance in stimulus
+    ///     samples. The detector then searches for the end marker near that
+    ///     offset (±1 %) and reports the measured clock drift.
+    ///   - requiredTrailingSamples: samples that must still fit after the
+    ///     marker start (marker + guard + payload). Candidate positions that
+    ///     leave less room than this cannot be the true marker and are
+    ///     excluded from the search — a confident-looking false lock late in
+    ///     the recording passes the confidence gate but not this one.
     public static func detect(
         marker: Marker,
         in recording: [Double],
-        expectedMarkerSpacing: Int? = nil
+        expectedMarkerSpacing: Int? = nil,
+        requiredTrailingSamples: Int? = nil
     ) -> Detection? {
         guard recording.count >= marker.samples.count else { return nil }
         let rawCorrelation = FFT.crossCorrelate(signal: recording, template: marker.samples)
@@ -127,14 +147,22 @@ public struct TimingReference: Sendable {
             correlation[i] = rawCorrelation[i] / ((windowEnergy + epsilon) * markerEnergy).squareRoot()
         }
 
+        // Positions that cannot hold the full stimulus are excluded up front.
+        let searchEnd: Int
+        if let required = requiredTrailingSamples {
+            searchEnd = max(1, min(correlation.count, recording.count - required + 1))
+        } else {
+            searchEnd = correlation.count
+        }
+
         var peakIndex = 0
         var peakValue = 0.0
         var sumSquares = 0.0
-        for (i, v) in correlation.enumerated() {
-            let mag = abs(v)
+        for i in 0..<correlation.count {
+            let v = correlation[i]
             sumSquares += v * v
-            if mag > peakValue {
-                peakValue = mag
+            if i < searchEnd, abs(v) > peakValue {
+                peakValue = abs(v)
                 peakIndex = i
             }
         }
@@ -184,6 +212,22 @@ public struct TimingReference: Sendable {
             }
         }
 
+        // Quiet-precedence measurement on the RESOLVED start marker: compare
+        // its window against the 0.25 s ending 50 ms before it.
+        var preMarkerQuietDB: Double?
+        let preGap = Int(0.05 * marker.sampleRate)
+        let preLength = Int(0.25 * marker.sampleRate)
+        let preEnd = startIndex - preGap
+        let preStart = preEnd - preLength
+        if preStart >= 0, preEnd > preStart {
+            let markerEnd = min(startIndex + marker.samples.count, recording.count)
+            let markerPower = (prefixEnergy[markerEnd] - prefixEnergy[startIndex])
+                / Double(max(markerEnd - startIndex, 1))
+            let prePower = (prefixEnergy[preEnd] - prefixEnergy[preStart])
+                / Double(preEnd - preStart)
+            preMarkerQuietDB = 10 * log10(max(markerPower, 1e-14) / max(prePower, 1e-14))
+        }
+
         let stimulusStart = startIndex + marker.samples.count
             + Int(marker.guardInterval * marker.sampleRate)
         return Detection(
@@ -191,7 +235,8 @@ public struct TimingReference: Sendable {
             stimulusStartIndex: stimulusStart,
             confidenceDB: confidence,
             endMarkerStartIndex: endMarkerIndex,
-            clockDriftPPM: driftPPM
+            clockDriftPPM: driftPPM,
+            preMarkerQuietDB: preMarkerQuietDB
         )
     }
 }

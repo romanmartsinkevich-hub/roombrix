@@ -4,6 +4,11 @@ import RoombrixDSP
 /// Reverberation-time estimation (T20, T30, EDT) from energy decay curves.
 public enum ReverbTime {
 
+    /// Which RT figure a band's conditions support.
+    public enum Metric: String, Sendable, Codable {
+        case t30, t20, unmeasurable
+    }
+
     public struct BandDecay: Sendable {
         public let centerFrequency: Double
         /// RT60 extrapolated from the -5…-25 dB fit, seconds. nil if the decay
@@ -18,6 +23,8 @@ public enum ReverbTime {
         public let t20FitQuality: Double?
         /// Coefficient of determination of the T30 fit.
         public let t30FitQuality: Double?
+        /// Decay range above the noise floor available in this band, dB.
+        public let usableDecayRangeDB: Double?
 
         public init(
             centerFrequency: Double,
@@ -25,7 +32,8 @@ public enum ReverbTime {
             t30: Double?,
             edt: Double?,
             t20FitQuality: Double?,
-            t30FitQuality: Double? = nil
+            t30FitQuality: Double? = nil,
+            usableDecayRangeDB: Double? = nil
         ) {
             self.centerFrequency = centerFrequency
             self.t20 = t20
@@ -33,6 +41,24 @@ public enum ReverbTime {
             self.edt = edt
             self.t20FitQuality = t20FitQuality
             self.t30FitQuality = t30FitQuality
+            self.usableDecayRangeDB = usableDecayRangeDB
+        }
+
+        /// Adaptive metric selection (validated on real data: a −43 dB noise
+        /// floor leaves only 8 dB margin below the T30 fit endpoint, biasing
+        /// T30 long while T20 stays accurate):
+        /// ≥ 40 dB usable range → T30; 25–40 dB → T20; below 25 dB the band
+        /// is honestly unmeasurable. Without range information (hand-built
+        /// values) the legacy T30-preferred order applies.
+        public var selectedMetric: Metric {
+            guard let range = usableDecayRangeDB else {
+                if t30 != nil { return .t30 }
+                if t20 != nil { return .t20 }
+                return .unmeasurable
+            }
+            if range >= 40, t30 != nil { return .t30 }
+            if range >= 25, t20 != nil { return .t20 }
+            return .unmeasurable
         }
     }
 
@@ -98,14 +124,15 @@ public enum ReverbTime {
                 t30: t30Fit.map { $0.rt60 },
                 edt: edtFit.map { $0.rt60 },
                 t20FitQuality: t20Fit.map { $0.rSquared },
-                t30FitQuality: t30Fit.map { $0.rSquared }
+                t30FitQuality: t30Fit.map { $0.rSquared },
+                usableDecayRangeDB: curve.usableRangeDB
             )
         }
     }
 
-    /// Preferred single RT60 figure per band: T30 when available, else T20.
-    ///
-    /// Two honesty gates, both discovered on real recordings:
+    /// Single RT60 figure per band, chosen by `BandDecay.selectedMetric`
+    /// (adaptive: T30 with ≥ 40 dB usable range, T20 with 25–40 dB, nil
+    /// below), then gated for honesty:
     /// - Fit quality: each estimate is gated by its OWN fit r² (a clean T20
     ///   must not vouch for a noise-bent T30, or vice versa).
     /// - Curvature: when T20 and T30 diverge wildly (ratio outside 0.5…2)
@@ -121,14 +148,24 @@ public enum ReverbTime {
             let curvature = t30 / t20
             if curvature > 2 || curvature < 0.5 { return nil }
         }
-        if let t30 = band.t30,
-           (band.t30FitQuality ?? band.t20FitQuality ?? 1) >= minimumFitQuality {
-            return t30
+        switch band.selectedMetric {
+        case .t30:
+            if let t30 = band.t30, (band.t30FitQuality ?? 1) >= minimumFitQuality {
+                return t30
+            }
+            // T30 conditions met but fit poor — a clean T20 is still honest.
+            if let t20 = band.t20, (band.t20FitQuality ?? 1) >= minimumFitQuality {
+                return t20
+            }
+            return nil
+        case .t20:
+            if let t20 = band.t20, (band.t20FitQuality ?? 1) >= minimumFitQuality {
+                return t20
+            }
+            return nil
+        case .unmeasurable:
+            return nil
         }
-        if let t20 = band.t20, (band.t20FitQuality ?? 1) >= minimumFitQuality {
-            return t20
-        }
-        return nil
     }
 
     /// Mid-band RT60 (mean of 500 Hz and 1 kHz), the conventional headline figure.

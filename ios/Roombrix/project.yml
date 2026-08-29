@@ -25,10 +25,16 @@ targets:
         product: RoombrixScoring
       - package: RoombrixCore
         product: RoombrixDiagnosis
+      - package: RoombrixCore
+        product: RoombrixValidation
     info:
       path: Sources/Info.plist
       properties:
         UILaunchScreen: {}
+        # Documents folder visible in Files app / Finder so raw capture WAVs
+        # can be handed back for CLI cross-verification.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         NSMicrophoneUsageDescription: >-
           Roombrix listens to a test sweep played through your speakers to
           measure how your room behaves acoustically. Audio is processed

@@ -12,6 +12,15 @@ public enum SchroederIntegration {
         public let noiseFloorDB: Double
         /// Index at which integration was truncated (noise-crossing point).
         public let truncationIndex: Int
+        /// Decay range available for fitting, on the EDC scale where the
+        /// T20/T30 fits happen: distance from the EDC top to the noise
+        /// plateau an untruncated integration would flatten at (analytic:
+        /// noise power × remaining samples / total energy), minus a 10 dB
+        /// safety margin per ISO 3382-2 practice. Drives adaptive metric
+        /// selection: a T30 fit ending at −35 dB is only trustworthy when
+        /// the plateau sits well below it — e.g. a −43 dB plateau leaves
+        /// 8 dB of margin and a usable range of 33 dB → T20 territory.
+        public let usableRangeDB: Double
     }
 
     /// Compute the EDC with noise-floor truncation.
@@ -33,7 +42,8 @@ public enum SchroederIntegration {
                 levelsDB: [Double](repeating: -120, count: samples.count),
                 sampleRate: sampleRate,
                 noiseFloorDB: -120,
-                truncationIndex: samples.count
+                truncationIndex: samples.count,
+                usableRangeDB: 0
             )
         }
 
@@ -78,11 +88,26 @@ public enum SchroederIntegration {
         for j in 0..<truncationIndex {
             edc[j] = 10 * log10(max(edc[j] / reference, 1e-14))
         }
+
+        // Usable range: −(untruncated-EDC noise plateau) − 10 dB safety.
+        // The plateau is computed analytically (noise power × samples past
+        // the truncation point) so it does not depend on how much noisy tail
+        // happens to be in the recording.
+        let remainingNoiseEnergy = noisePower * Double(squared.count - truncationIndex)
+        let usableRangeDB: Double
+        if remainingNoiseEnergy > 0 {
+            let plateauDB = 10 * log10(max(remainingNoiseEnergy / totalEnergy, 1e-14))
+            usableRangeDB = max(0, min(90, -plateauDB - 10))
+        } else {
+            usableRangeDB = 90
+        }
+
         return DecayCurve(
             levelsDB: edc,
             sampleRate: sampleRate,
             noiseFloorDB: noiseFloorDB,
-            truncationIndex: truncationIndex
+            truncationIndex: truncationIndex,
+            usableRangeDB: usableRangeDB
         )
     }
 }

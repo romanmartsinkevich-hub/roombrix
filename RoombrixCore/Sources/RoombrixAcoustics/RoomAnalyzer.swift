@@ -53,10 +53,15 @@ public enum RoomAnalyzer {
     ///     magnitude curves are power-averaged with the primary for the
     ///     spatially averaged frequency response.
     ///   - ambient: pre-stimulus room-noise capture, if available.
+    ///   - calibration: mic correction curve. Applied to the frequency
+    ///     response ONLY — decay/clarity metrics are relative time-domain
+    ///     measures and are never calibrated (hard rule; see
+    ///     MicrophoneCalibration).
     public static func analyze(
         primary: ImpulseResponse,
         additionalPositions: [ImpulseResponse] = [],
-        ambient: [Double]? = nil
+        ambient: [Double]? = nil,
+        calibration: MicrophoneCalibration? = nil
     ) -> AcousticReport {
         let decays = ReverbTime.analyze(primary)
 
@@ -64,7 +69,10 @@ public enum RoomAnalyzer {
         for ir in additionalPositions {
             curves.append(FrequencyResponse.smoothedMagnitude(of: ir))
         }
-        let averaged = FrequencyResponse.spatialAverage(curves) ?? curves[0]
+        var averaged = FrequencyResponse.spatialAverage(curves) ?? curves[0]
+        if let calibration {
+            averaged = calibration.applied(to: averaged)
+        }
 
         return AcousticReport(
             bandDecays: decays,

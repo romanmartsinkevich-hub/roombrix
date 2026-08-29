@@ -118,6 +118,32 @@ the UI must hide modal predictions and show only measured LF data (open
 question #4 — threshold to be calibrated in beta). RoomPlan scans (LiDAR) and
 manual L×W×H entry both reduce to `RoomGeometry`.
 
+## Product-level measurement policies (binding for app + CLI)
+
+- **Channel handling:** analyze exactly ONE explicit input channel (first
+  channel); never sum/downmix channels. Downmixing a stereo or mid-side
+  external mic partially cancels reverberant energy and biases decay
+  measurements short (verified on MV88 recordings: downmix shifted HF T30 by
+  −20…−30 % and produced a physically impossible 8 kHz > 4 kHz decay). The
+  iOS capture path reads channel 0 only; the CLI states which channel it
+  used.
+- **Adaptive RT metric selection:** per band, from the usable decay range
+  above the EDC noise plateau (with 10 dB safety margin): ≥ 40 dB → T30,
+  25–40 dB → T20, < 25 dB → band reported unmeasurable. The selected metric
+  is carried in `BandDecay.selectedMetric` and surfaced in every report.
+  Justified on real data: a −43 dB plateau biased T30 +19 % vs REW while T20
+  stayed at +3 %.
+- **Mic calibration:** correction curves (built-in per-device or user-loaded
+  UMIK-style files) apply to frequency-response metrics ONLY, never to decay
+  or clarity (relative time-domain metrics). Enforced structurally: the decay
+  pipeline has no calibration input. Built-in curves are produced by the
+  substitution method (see `docs/DEVICE_QUIRKS.md`).
+- **Timing-marker plausibility gates** (confidence alone is not trusted —
+  a false lock onto the sweep once reported 24.5 dB confidence): candidate
+  positions must leave room for the full stimulus; the start marker must be
+  ≥ 6 dB louder than the region preceding it; start/end marker spacing
+  implying > 2 000 ppm clock drift is a detection failure.
+
 ## App-side responsibilities (not in RoombrixCore)
 
 - `CaptureEngine`: AVAudioSession `.measurement` capture (AGC off), 48 kHz.
