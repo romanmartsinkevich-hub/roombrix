@@ -65,6 +65,25 @@ struct MeasurementResult: Identifiable {
     }
 }
 
+/// Failure carrying a user-facing message (String itself is not an Error).
+struct MeasurementFailure: LocalizedError {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
+}
+
+/// Flow constants. Deliberately OUTSIDE the @MainActor coordinator class:
+/// statics of a MainActor type inherit its isolation, and the nonisolated
+/// processing path must be able to read these.
+enum MeasurementConstants {
+    static let ambientSeconds = 5
+    static let sweepDuration = 10.0
+    static let decayTailSeconds = 3.0
+    static let targetSNRdB = 45.0
+    static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
+    static let maxSweepRecordingSeconds = 180.0
+}
+
 /// Per-band live/ambient level for the UI.
 struct BandLevel: Identifiable {
     var id: Double { frequency }
@@ -122,13 +141,6 @@ final class MeasurementCoordinator: ObservableObject {
     private var meteringTask: Task<Void, Never>?
     private var sweepWatchTask: Task<Void, Never>?
 
-    static let ambientSeconds = 5
-    static let sweepDuration = 10.0
-    static let decayTailSeconds = 3.0
-    static let targetSNRdB = 45.0
-    static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
-    static let maxSweepRecordingSeconds = 180.0
-
     #if canImport(AVFAudio)
 
     // MARK: - Stage A: ambient
@@ -149,7 +161,7 @@ final class MeasurementCoordinator: ObservableObject {
             phase = .failed(error.localizedDescription)
             return
         }
-        for remaining in stride(from: Self.ambientSeconds, to: 0, by: -1) {
+        for remaining in stride(from: MeasurementConstants.ambientSeconds, to: 0, by: -1) {
             phase = .capturingAmbient(secondsLeft: remaining)
             try? await Task.sleep(for: .seconds(1))
         }
@@ -199,7 +211,7 @@ final class MeasurementCoordinator: ObservableObject {
         let clippedCount = recent.lazy.filter { abs($0) >= 0.99 }.count
         var snrs: [BandSNR] = []
         var worst = Double.infinity
-        for center in Self.snrBands where center < fs / 2 {
+        for center in MeasurementConstants.snrBands where center < fs / 2 {
             let live = Self.bandLevelDB(recent, center: center, sampleRate: fs)
             let ambient = ambientBandsByFrequency[center] ?? -100
             let snr = live - ambient
@@ -209,7 +221,7 @@ final class MeasurementCoordinator: ObservableObject {
         liveSNR = snrs
         if clippedCount > 5 {
             trafficLight = .clipping
-        } else if worst >= Self.targetSNRdB {
+        } else if worst >= MeasurementConstants.targetSNRdB {
             trafficLight = .good
         } else {
             trafficLight = .tooQuiet
@@ -265,9 +277,9 @@ final class MeasurementCoordinator: ObservableObject {
 
                 // Auto-stop: enough signal seen (sweep ≈ 10 s) and quiet for
                 // decay tail + margin — or the hard cap.
-                let sawSweep = signalSeconds >= Self.sweepDuration * 0.7
-                let tailDone = quietSecondsAfterSignal >= Self.decayTailSeconds + 1.5
-                if (sawSweep && tailDone) || elapsed > Self.maxSweepRecordingSeconds {
+                let sawSweep = signalSeconds >= MeasurementConstants.sweepDuration * 0.7
+                let tailDone = quietSecondsAfterSignal >= MeasurementConstants.decayTailSeconds + 1.5
+                if (sawSweep && tailDone) || elapsed > MeasurementConstants.maxSweepRecordingSeconds {
                     await MainActor.run { self.finishSweep() }
                     return
                 }
@@ -298,8 +310,8 @@ final class MeasurementCoordinator: ObservableObject {
                 case .success(let result):
                     self.result = result
                     self.phase = .done
-                case .failure(let message):
-                    self.phase = .failed(message)
+                case .failure(let failure):
+                    self.phase = .failed(failure.message)
                 }
             }
         }
@@ -336,24 +348,24 @@ final class MeasurementCoordinator: ObservableObject {
         pinkLevelDB: Double?,
         sampleRate fs: Double,
         inputDescription: String
-    ) -> Result<MeasurementResult, String> {
+    ) -> Result<MeasurementResult, MeasurementFailure> {
         let sweep = SineSweep(parameters: .init(
             startFrequency: 20, endFrequency: 20_000,
-            duration: sweepDuration, sampleRate: fs
+            duration: MeasurementConstants.sweepDuration, sampleRate: fs
         ))
         let marker = TimingReference.makeMarker(sampleRate: fs)
 
         // Clipping gate.
         let clipped = recording.lazy.filter { abs($0) >= 0.99 }.count
         if clipped > 10 {
-            return .failure("Clipping detected (\(clipped) samples at full scale). Lower the volume slightly and measure again.")
+            return .failure(MeasurementFailure("Clipping detected (\(clipped) samples at full scale). Lower the volume slightly and measure again."))
         }
 
         // Length gate.
         let guardSamples = Int(marker.guardInterval * fs)
         let requiredTrailing = marker.samples.count + guardSamples + sweep.samples.count
         guard recording.count >= requiredTrailing + Int(3 * fs) else {
-            return .failure("The recording ended before the sweep finished. Let the sweep play to the end, then wait a few seconds before stopping.")
+            return .failure(MeasurementFailure("The recording ended before the sweep finished. Let the sweep play to the end, then wait a few seconds before stopping."))
         }
 
         // Marker detection with plausibility gates.
@@ -363,13 +375,13 @@ final class MeasurementCoordinator: ObservableObject {
             expectedMarkerSpacing: spacing,
             requiredTrailingSamples: requiredTrailing
         ), detection.confidenceDB >= TimingReference.minimumConfidenceDB else {
-            return .failure("The timing chirp was not detected. Make sure you played the Roombrix sweep file (it starts with a short chirp) at the volume you set, and measure again.")
+            return .failure(MeasurementFailure("The timing chirp was not detected. Make sure you played the Roombrix sweep file (it starts with a short chirp) at the volume you set, and measure again."))
         }
         if let quiet = detection.preMarkerQuietDB, quiet < TimingReference.minimumPreMarkerQuietDB {
-            return .failure("The chirp was not preceded by silence — possibly a false detection, or the pink noise was still playing. Stop the pink noise fully before starting the sweep, then measure again.")
+            return .failure(MeasurementFailure("The chirp was not preceded by silence — possibly a false detection, or the pink noise was still playing. Stop the pink noise fully before starting the sweep, then measure again."))
         }
         if let drift = detection.clockDriftPPM, abs(drift) > TimingReference.maximumPlausibleDriftPPM {
-            return .failure("Playback timing was inconsistent (possible dropout or stutter). Measure again; if it repeats, try a different playback source.")
+            return .failure(MeasurementFailure("Playback timing was inconsistent (possible dropout or stutter). Measure again; if it repeats, try a different playback source."))
         }
 
         // SNR from the dedicated ambient stage.

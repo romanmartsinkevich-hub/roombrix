@@ -167,12 +167,12 @@ struct MeasureView: View {
             Section {
                 trafficLightView
             }
-            Section("Headroom per band (target ≥ \(Int(MeasurementCoordinator.targetSNRdB)) dB)") {
+            Section("Headroom per band (target ≥ \(Int(MeasurementConstants.targetSNRdB)) dB)") {
                 ForEach(coordinator.liveSNR) { band in
                     HStack {
                         Text(bandLabel(band.frequency)).frame(width: 64, alignment: .leading)
                         Gauge(value: min(max(band.snrDB, 0), 60), in: 0...60) { EmptyView() }
-                            .tint(band.snrDB >= MeasurementCoordinator.targetSNRdB ? .green : .orange)
+                            .tint(band.snrDB >= MeasurementConstants.targetSNRdB ? .green : .orange)
                         Text(String(format: "%.0f dB", band.snrDB))
                             .frame(width: 52, alignment: .trailing)
                             .monospacedDigit()

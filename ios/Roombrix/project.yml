@@ -14,6 +14,10 @@ targets:
     platform: iOS
     sources:
       - Sources
+    # Shared scheme so CI can build via `xcodebuild -scheme Roombrix`.
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
     dependencies:
       - package: RoombrixCore
         product: RoombrixDSP
