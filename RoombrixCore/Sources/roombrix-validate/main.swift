@@ -50,20 +50,29 @@ func hasFlag(_ name: String, in args: [String]) -> Bool {
 }
 
 func printDecayTable(_ decays: [ReverbTime.BandDecay]) {
-    print("Band (Hz) |   EDT   |   T20   |   T30   |  fit r² | Range | Metric used")
-    print("----------|---------|---------|---------|---------|-------|------------")
+    print("Band (Hz) |   EDT   |   RT60  |  fit r² | Range |  Window   | Metric used")
+    print("----------|---------|---------|---------|-------|-----------|------------")
     for d in decays {
         func fmt(_ v: Double?) -> String { v.map { String(format: "%.3f s", $0) } ?? "   —   " }
-        let quality = d.t20FitQuality.map { String(format: "%.3f", $0) } ?? "  —  "
+        let rt = ReverbTime.bestEstimate(d)
+        let quality = d.adaptiveFitQuality.map { String(format: "%.3f", $0) }
+            ?? d.t20FitQuality.map { String(format: "%.3f", $0) } ?? "  —  "
         let range = d.usableDecayRangeDB.map { String(format: "%2.0f dB", $0) } ?? "  —  "
+        let window: String
+        if let start = d.windowStartDB, let end = d.windowEndDB {
+            window = String(format: "%.0f…%.0f", start, end)
+        } else {
+            window = "    —    "
+        }
         let metric: String
         switch d.selectedMetric {
         case .t30: metric = "T30"
         case .t20: metric = "T20 (range-limited)"
+        case .topt: metric = "Topt (direct-dominated top)"
         case .unmeasurable: metric = "unmeasurable"
         }
-        print(String(format: "%9.0f | %@ | %@ | %@ | %@   | %@ | %@",
-                     d.centerFrequency, fmt(d.edt), fmt(d.t20), fmt(d.t30), quality, range, metric))
+        print(String(format: "%9.0f | %@ | %@ | %@   | %@ | %@ | %@",
+                     d.centerFrequency, fmt(d.edt), fmt(rt), quality, range, window, metric))
     }
 }
 
@@ -236,6 +245,18 @@ case "measure":
         directIndex: deconvolved.peakIndex
     )
     let decays = ReverbTime.analyze(ir)
+
+    if let directRatio = RoomAnalyzer.directToReverberantDB(ir) {
+        print(String(format: "Direct-to-reverberant ratio: %.1f dB", directRatio))
+        if directRatio > AcousticReport.excessiveDirectToReverbDB {
+            print("""
+            WARNING: the direct sound towers \(String(format: "%.0f", directRatio)) dB over the reverberant field
+            (healthy captures sit around 20–30 dB). This is the excessive-playback-level
+            signature: decay windows are placed adaptively to compensate, but re-measuring
+            at a lower volume will give more decay range and tighter results.
+            """)
+        }
+    }
 
     print("")
     printDecayTable(decays)

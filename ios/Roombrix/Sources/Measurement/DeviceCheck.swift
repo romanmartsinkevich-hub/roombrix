@@ -29,11 +29,16 @@ enum DeviceCheck {
         let sampleRate: Double
         let inputDescription: String
 
+        /// Full capture-setup pinning report (port, data source, polar
+        /// pattern requested vs granted, rate, mode) — quirks-table material.
+        let setupReport: String
+
         var reportText: String {
             let blocks = blockLevelsDB.map { String(format: "%.1f", $0) }.joined(separator: ", ")
             return """
             Device check — \(deviceModel), iOS \(systemVersion)
             Input: \(inputDescription) @ \(Int(sampleRate)) Hz
+            \(setupReport)
             1 s block levels (dBFS): \(blocks)
             Level drift on steady pink noise: \(String(format: "%.2f", driftDB)) dB
             Gain-riding AGC: \(passed ? "NOT DETECTED (drift ≤ 1.5 dB)" : "SUSPECTED — see quirks table")
@@ -83,7 +88,8 @@ enum DeviceCheck {
             deviceModel: model,
             systemVersion: version,
             sampleRate: fs,
-            inputDescription: engine.inputDescription
+            inputDescription: engine.inputDescription,
+            setupReport: engine.setupReport
         )
     }
     #endif

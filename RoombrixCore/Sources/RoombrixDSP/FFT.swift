@@ -1,12 +1,32 @@
 import Foundation
+#if canImport(Accelerate)
+import Accelerate
 
-/// Portable pure-Swift radix-2 FFT. All Roombrix spectral processing goes
-/// through this type so the DSP kernel stays testable on Linux CI.
-///
-/// The interface (`transform`/`magnitudeSpectrum`/`convolve`/`crossCorrelate`)
-/// is deliberately shaped so a vDSP-backed implementation can be swapped in
-/// behind it on Apple platforms if device profiling shows the need; no such
-/// fast path exists yet.
+/// Cached vDSP DFT setups (setup creation is expensive; execution is not).
+private final class DFTSetupCache: @unchecked Sendable {
+    static let shared = DFTSetupCache()
+    private var setups: [UInt64: vDSP_DFT_SetupD] = [:]
+    private let lock = NSLock()
+
+    func setup(length: Int, inverse: Bool) -> vDSP_DFT_SetupD? {
+        let key = (UInt64(length) << 1) | (inverse ? 1 : 0)
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = setups[key] { return existing }
+        let direction: vDSP_DFT_Direction = inverse ? .INVERSE : .FORWARD
+        guard let created = vDSP_DFT_zop_CreateSetupD(nil, vDSP_Length(length), direction) else {
+            return nil
+        }
+        setups[key] = created
+        return created
+    }
+}
+#endif
+
+/// Radix-2 FFT: vDSP-backed on Apple platforms (device performance),
+/// portable pure-Swift everywhere else (Linux CI runs the same tests, and
+/// macOS CI runs them through the vDSP path, so both implementations are
+/// held to identical ground truth).
 public enum FFT {
 
     /// Smallest power of two >= n.
@@ -23,6 +43,24 @@ public enum FFT {
         let n = real.count
         precondition(n == imag.count, "real/imag length mismatch")
         precondition(n > 0 && (n & (n - 1)) == 0, "FFT length must be a power of two")
+
+        #if canImport(Accelerate)
+        // vDSP DFT requires n >= 8 for these setups; tiny sizes use the
+        // portable path (their cost is negligible anyway).
+        if n >= 8, let setup = DFTSetupCache.shared.setup(length: n, inverse: inverse) {
+            var outReal = [Double](repeating: 0, count: n)
+            var outImag = [Double](repeating: 0, count: n)
+            vDSP_DFT_ExecuteD(setup, real, imag, &outReal, &outImag)
+            if inverse {
+                var scale = 1.0 / Double(n)
+                vDSP_vsmulD(outReal, 1, &scale, &outReal, 1, vDSP_Length(n))
+                vDSP_vsmulD(outImag, 1, &scale, &outImag, 1, vDSP_Length(n))
+            }
+            real = outReal
+            imag = outImag
+            return
+        }
+        #endif
 
         // Bit-reversal permutation.
         var j = 0

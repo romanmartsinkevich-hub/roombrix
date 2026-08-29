@@ -100,12 +100,14 @@ final class ReverbTimeTests: XCTestCase {
             XCTAssertNotNil(band.usableDecayRangeDB)
             XCTAssertLessThan(band.usableDecayRangeDB!, 40, "range must be T20 territory")
             XCTAssertGreaterThanOrEqual(band.usableDecayRangeDB!, 25)
-            XCTAssertEqual(band.selectedMetric, .t20, "T20 selected when 25–40 dB available")
+            XCTAssertEqual(band.selectedMetric, .t20, "T20-class window when 25–40 dB available")
+            // Window reported, anchored near the top, span below T30 class.
+            XCTAssertEqual(band.windowStartDB ?? -99, -5, accuracy: 0.01)
+            XCTAssertLessThan((band.windowStartDB ?? 0) - (band.windowEndDB ?? 0), 30)
             guard let rt = ReverbTime.bestEstimate(band) else {
                 XCTFail("band \(band.centerFrequency) should still be measurable via T20")
                 continue
             }
-            XCTAssertEqual(rt, band.t20!, "estimate must be the T20 figure")
             XCTAssertEqual(rt, trueRT, accuracy: trueRT * 0.15)
         }
     }
@@ -126,6 +128,53 @@ final class ReverbTimeTests: XCTestCase {
         )
         XCTAssertEqual(band.selectedMetric, .unmeasurable)
         XCTAssertNil(ReverbTime.bestEstimate(band))
+    }
+
+    func testLoudCaptureDirectDominatedRecoversRoomDecay() {
+        // Regression for the 2026-08-29 app capture: playback ~12 dB too
+        // loud pushed the direct-to-reverberant ratio from ~21 dB to ~60 dB.
+        // The fixed −5…−35 dB window then read the direct pulse (4 kHz
+        // "T30" = 0.064 s / 0.006 s garbage) although the late decay rate
+        // was the correct room. The adaptive window must recover ~0.5 s
+        // from the reverberant portion of the SAME curve.
+        let trueRT = 0.5
+        let (ir, _) = SyntheticIR.realisticRoom(
+            rt60: trueRT, duration: 1.5, sampleRate: fs,
+            noiseFloorDB: -80,
+            directGain: 350  // tail amplitude 0.35 → D/R = 60 dB
+        )
+        let decays = ReverbTime.analyze(ir, bands: [2_000, 4_000])
+        for band in decays {
+            XCTAssertEqual(band.selectedMetric, .topt,
+                           "direct-dominated top must force a lowered window")
+            XCTAssertNotNil(band.windowStartDB)
+            XCTAssertLessThan(band.windowStartDB!, -10)
+            guard let rt = ReverbTime.bestEstimate(band) else {
+                XCTFail("band \(band.centerFrequency): room decay must be recoverable")
+                continue
+            }
+            XCTAssertGreaterThan(rt, 0.1, "never the millisecond cliff artifact")
+            XCTAssertEqual(rt, trueRT, accuracy: trueRT * 0.25, "band \(band.centerFrequency)")
+            // Usable range is reverberant-referenced: sane double digits,
+            // not the impossible 76–85 dB peak-above-noise figure.
+            XCTAssertLessThan(band.usableDecayRangeDB ?? 999, 60)
+        }
+
+        // The capture-level indicator must flag this.
+        let report = RoomAnalyzer.analyze(primary: ir)
+        XCTAssertNotNil(report.directToReverberantDB)
+        XCTAssertGreaterThan(
+            report.directToReverberantDB!,
+            AcousticReport.excessiveDirectToReverbDB
+        )
+    }
+
+    func testDirectToReverberantSaneOnNormalCapture() {
+        let (ir, _) = SyntheticIR.realisticRoom(rt60: 0.5, duration: 1.5, sampleRate: fs, noiseFloorDB: -65)
+        let ratio = RoomAnalyzer.directToReverberantDB(ir)
+        XCTAssertNotNil(ratio)
+        XCTAssertLessThan(ratio!, AcousticReport.excessiveDirectToReverbDB,
+                          "a normal-level capture must not trigger the warning")
     }
 
     func testBestEstimateGating() {

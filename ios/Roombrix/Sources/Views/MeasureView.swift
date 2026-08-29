@@ -187,7 +187,7 @@ struct MeasureView: View {
                         .font(.headline)
                 }
             } footer: {
-                Text("Play the pink-noise file on loop and raise the volume until everything is green (loud, but never painful). Then STOP the pink noise, keep the volume knob where it is, and continue.")
+                Text("Play the pink-noise file on loop and raise the volume until everything is green — a normal, comfortable listening level is usually enough. Green here means ample headroom for the sweep (which concentrates its energy band by band and gains further range in processing). LOUDER IS NOT BETTER: excessive level distorts the measurement. Then STOP the pink noise, keep the volume knob where it is, and continue. You can also continue before everything is green — some bass bands may then be reported as unmeasurable, nothing worse.")
             }
         }
     }
@@ -259,6 +259,16 @@ struct ResultView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            if let ratio = result.report.directToReverberantDB,
+               ratio > AcousticReport.excessiveDirectToReverbDB {
+                Section {
+                    Label(
+                        String(format: "Playback level was too high: the direct sound is %.0f dB above the room's reverberant field (healthy is 20–30 dB). The analysis compensated, but re-measuring at a noticeably lower volume will give tighter results.", ratio),
+                        systemImage: "speaker.wave.3.fill"
+                    )
+                    .foregroundStyle(.orange)
+                }
+            }
             Section("Decay per band") {
                 ForEach(result.report.bandDecays, id: \.centerFrequency) { band in
                     HStack {
@@ -271,7 +281,7 @@ struct ResultView: View {
                         default:
                             if let rt = ReverbTime.bestEstimate(band) {
                                 Text(String(format: "%.2f s", rt))
-                                Text(band.selectedMetric == .t20 ? "T20" : "T30")
+                                Text(metricLabel(band.selectedMetric))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
@@ -326,6 +336,15 @@ struct ResultView: View {
 
     private func bandLabel(_ f: Double) -> String {
         f >= 1_000 ? String(format: "%.0f kHz", f / 1_000) : String(format: "%.0f Hz", f)
+    }
+
+    private func metricLabel(_ metric: ReverbTime.Metric) -> String {
+        switch metric {
+        case .t30: return "T30"
+        case .t20: return "T20"
+        case .topt: return "Topt"
+        case .unmeasurable: return "—"
+        }
     }
 }
 

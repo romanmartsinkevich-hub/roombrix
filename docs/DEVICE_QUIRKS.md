@@ -5,12 +5,20 @@ table is a **living deliverable** (brief §5.2 / Milestone 5): every supported
 model gets verified before public beta. Fill rows via the Sprint 0 capture
 spike on real hardware.
 
-Verification protocol per device:
-1. Configure `.playAndRecord` + `.measurement`, 48 kHz preferred.
-2. Record a swept sine from a reference speaker at fixed level; repeat 3×.
-3. Check: reported vs actual sample rate, AGC actually disabled (level
-   linearity across a 20 dB stimulus sweep), LF roll-off corner, inter-unit
-   variance if multiple units available.
+Verification protocol per device (the in-app device check produces all of
+this automatically — paste its report into the row):
+1. Configure `.record` + `.measurement`, 48 kHz preferred, input pinned:
+   built-in mic port selected explicitly, omnidirectional-capable data
+   source preferred, omni polar pattern requested. Record requested vs
+   **granted** pattern — several iPhone models expose selectable patterns
+   including directional ones, which reproduce the MV88 reverb-suppression
+   failure mode. Configuration fails loudly if a directional pattern is
+   locked in.
+2. Loop steady pink noise from an external system; record 8 s; check level
+   drift across 1 s blocks (> 1.5 dB drift = gain-riding AGC).
+3. Log: input port, selected data source name, polar pattern requested vs
+   granted, negotiated sample rate, `.measurement` mode accepted.
+4. LF roll-off corner and inter-unit variance where reference gear allows.
 
 | Model | iOS ver. tested | Actual sample rate | AGC off confirmed | LF roll-off (−3 dB) | Correction curve id | Notes |
 |---|---|---|---|---|---|---|

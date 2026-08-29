@@ -22,6 +22,7 @@ final class AudioMeasurementEngine {
     enum EngineError: Error, LocalizedError {
         case permissionDenied
         case sessionConfiguration(Error)
+        case directionalMicLocked(String)
 
         var errorDescription: String? {
             switch self {
@@ -29,6 +30,8 @@ final class AudioMeasurementEngine {
                 return "Microphone access is required to measure the room. Enable it in Settings → Privacy → Microphone."
             case .sessionConfiguration(let error):
                 return "Audio session could not be configured: \(error.localizedDescription)"
+            case .directionalMicLocked(let pattern):
+                return "The microphone is locked to a directional pattern (\(pattern)) and cannot be switched to omnidirectional. A directional pattern suppresses reverberant energy and corrupts decay measurements — this device/route cannot be used for measurement."
             }
         }
     }
@@ -47,16 +50,77 @@ final class AudioMeasurementEngine {
         await AVAudioApplication.requestRecordPermission()
     }
 
+    /// Input pinning details for reports and the device-quirks table.
+    private(set) var setupReport: String = ""
+
     /// Configure the session for measurement-grade capture. Returns the
     /// actual hardware sample rate — always read back, never assumed.
+    ///
+    /// Input pinning (never left to the system default): the built-in mic
+    /// port is selected explicitly; among its data sources one supporting
+    /// the omnidirectional polar pattern is preferred and that pattern is
+    /// requested. If a directional pattern is in effect and cannot be
+    /// changed, configuration FAILS rather than silently reproducing the
+    /// MV88-style reverb-suppression failure mode.
     func configureSession() throws -> Double {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.record, mode: .measurement)
+
+            var reportLines: [String] = []
+            var requestedPattern = "n/a (fixed capsule)"
+
+            if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try? session.setPreferredInput(builtIn)
+                if let sources = builtIn.dataSources, !sources.isEmpty {
+                    let omniCapable = sources.first {
+                        $0.supportedPolarPatterns?.contains(.omnidirectional) == true
+                    }
+                    let chosen = omniCapable ?? sources[0]
+                    try? builtIn.setPreferredDataSource(chosen)
+                    if omniCapable != nil {
+                        requestedPattern = "omnidirectional"
+                        try? chosen.setPreferredPolarPattern(.omnidirectional)
+                    }
+                    reportLines.append("Data source: \(chosen.dataSourceName) (of \(sources.count))")
+                } else {
+                    reportLines.append("Data source: none exposed by this device")
+                }
+            }
+
             try session.setPreferredSampleRate(48_000)
             try session.setActive(true)
             sampleRate = session.sampleRate
+
+            // Verify what was actually granted.
+            let activeInput = session.currentRoute.inputs.first
+            let activeSource = activeInput?.selectedDataSource
+            var grantedPattern = "n/a (fixed capsule)"
+            if let pattern = activeSource?.selectedPolarPattern {
+                grantedPattern = pattern.rawValue
+                if pattern != .omnidirectional {
+                    let canBeOmni = activeSource?.supportedPolarPatterns?
+                        .contains(.omnidirectional) ?? false
+                    if canBeOmni {
+                        try? activeSource?.setPreferredPolarPattern(.omnidirectional)
+                    } else {
+                        throw EngineError.directionalMicLocked(pattern.rawValue)
+                    }
+                }
+            }
+
+            reportLines.insert(
+                "Input port: \(activeInput?.portName ?? "unknown") (\(activeInput?.portType.rawValue ?? "?"))",
+                at: 0
+            )
+            reportLines.append("Polar pattern requested: \(requestedPattern); granted: \(grantedPattern)")
+            reportLines.append("Sample rate: \(Int(session.sampleRate)) Hz (preferred 48000)")
+            reportLines.append("Mode .measurement accepted: \(session.mode == .measurement)")
+            setupReport = reportLines.joined(separator: "\n")
+
             return sampleRate
+        } catch let error as EngineError {
+            throw error
         } catch {
             throw EngineError.sessionConfiguration(error)
         }

@@ -14,6 +14,14 @@ public struct AcousticReport: Sendable {
     public var smoothnessDeviationDB: Double
     public var lowFrequencyPeaks: [(frequency: Double, prominenceDB: Double)]
     public var noiseFloor: NoiseFloor.Estimate?
+    /// Direct-sound peak vs early reverberant field (RMS 2–10 ms after the
+    /// peak), dB. Calibration from real captures: ~21 dB at a correct
+    /// playback level, ~60 dB when the level was excessive. Above
+    /// `AcousticReport.excessiveDirectToReverbDB` the capture level should
+    /// be flagged rather than silently mis-fit.
+    public var directToReverberantDB: Double?
+
+    public static let excessiveDirectToReverbDB = 35.0
 
     public init(
         bandDecays: [ReverbTime.BandDecay],
@@ -26,7 +34,8 @@ public struct AcousticReport: Sendable {
         frequencyResponse: FrequencyResponse.Curve,
         smoothnessDeviationDB: Double,
         lowFrequencyPeaks: [(frequency: Double, prominenceDB: Double)],
-        noiseFloor: NoiseFloor.Estimate?
+        noiseFloor: NoiseFloor.Estimate?,
+        directToReverberantDB: Double? = nil
     ) {
         self.bandDecays = bandDecays
         self.midBandRT60 = midBandRT60
@@ -39,6 +48,7 @@ public struct AcousticReport: Sendable {
         self.smoothnessDeviationDB = smoothnessDeviationDB
         self.lowFrequencyPeaks = lowFrequencyPeaks
         self.noiseFloor = noiseFloor
+        self.directToReverberantDB = directToReverberantDB
     }
 }
 
@@ -85,7 +95,23 @@ public enum RoomAnalyzer {
             frequencyResponse: averaged,
             smoothnessDeviationDB: FrequencyResponse.smoothnessDeviation(of: averaged),
             lowFrequencyPeaks: FrequencyResponse.lowFrequencyPeaks(in: averaged),
-            noiseFloor: ambient.flatMap(NoiseFloor.estimate)
+            noiseFloor: ambient.flatMap(NoiseFloor.estimate),
+            directToReverberantDB: directToReverberantDB(primary)
         )
+    }
+
+    /// Direct-sound peak vs early reverberant field: peak level minus the
+    /// RMS level of the 2–10 ms window after the peak.
+    public static func directToReverberantDB(_ ir: ImpulseResponse) -> Double? {
+        let fs = ir.sampleRate
+        let start = ir.directIndex + Int(0.002 * fs)
+        let end = min(ir.directIndex + Int(0.010 * fs), ir.samples.count)
+        guard end > start + 8 else { return nil }
+        var energy = 0.0
+        for i in start..<end { energy += ir.samples[i] * ir.samples[i] }
+        let rms = (energy / Double(end - start)).squareRoot()
+        let peak = abs(ir.samples[ir.directIndex])
+        guard rms > 0, peak > 0 else { return nil }
+        return 20 * log10(peak / rms)
     }
 }

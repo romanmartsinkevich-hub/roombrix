@@ -101,6 +101,10 @@ enum SyntheticIR {
     /// whole record, and a small DC offset. The other generators start at
     /// index 0 with no arrival structure; this one stresses the full
     /// pipeline the way a real capture does.
+    /// `directGain` scales ONLY the direct spike (not reflections or tail):
+    /// the empirically observed excessive-playback failure raises the direct
+    /// peak relative to the reverberant field (21 dB → 60 dB in real
+    /// captures), and this parameter reproduces exactly that signature.
     static func realisticRoom(
         rt60: Double,
         duration: Double,
@@ -108,6 +112,7 @@ enum SyntheticIR {
         leadIn: Double = 0.05,
         noiseFloorDB: Double = -55,
         dcOffset: Double = 0.002,
+        directGain: Double = 1.0,
         seed: UInt64 = 42
     ) -> (ir: ImpulseResponse, directIndex: Int) {
         var rng = SeededGenerator(seed: seed)
@@ -116,9 +121,9 @@ enum SyntheticIR {
         var samples = [Double](repeating: 0, count: count)
 
         // Direct sound: dominant peak with a short bandlimited-ish skirt.
-        samples[directIndex] = 1.0
-        if directIndex + 1 < count { samples[directIndex + 1] = 0.35 }
-        if directIndex > 0 { samples[directIndex - 1] = 0.15 }
+        samples[directIndex] = 1.0 * directGain
+        if directIndex + 1 < count { samples[directIndex + 1] = 0.35 * directGain }
+        if directIndex > 0 { samples[directIndex - 1] = 0.15 * directGain }
 
         // Distinct early reflections at aperiodic delays (no flutter).
         let earlyReflections: [(delayMs: Double, gain: Double)] = [

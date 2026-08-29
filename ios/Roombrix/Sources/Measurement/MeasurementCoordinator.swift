@@ -16,6 +16,9 @@ struct MeasurementResult: Identifiable {
     let snrDB: Double?
     let sampleRate: Double
     let inputDescription: String
+    /// Input pinning details (port, data source, polar pattern, mode) from
+    /// capture setup — quirks-table material.
+    let captureSetupReport: String
     /// Set when the sweep arrived at a clearly different level than the
     /// pink-noise pass — the user changed the volume between stages.
     let levelChangeWarning: String?
@@ -27,6 +30,12 @@ struct MeasurementResult: Identifiable {
         var lines: [String] = []
         lines.append("Roombrix measurement — \(date.formatted(date: .abbreviated, time: .standard))")
         lines.append("Input: \(inputDescription) @ \(Int(sampleRate)) Hz")
+        lines.append(captureSetupReport)
+        if let ratio = report.directToReverberantDB {
+            lines.append(String(format: "Direct-to-reverberant: %.1f dB%@", ratio,
+                                ratio > AcousticReport.excessiveDirectToReverbDB
+                                    ? " — PLAYBACK LEVEL TOO HIGH, re-measure quieter" : ""))
+        }
         lines.append(String(format: "Marker confidence: %.1f dB; latency %.3f s", markerConfidenceDB, latencySeconds))
         if let quiet = preMarkerQuietDB {
             lines.append(String(format: "Pre-marker quiet: %.1f dB", quiet))
@@ -41,14 +50,20 @@ struct MeasurementResult: Identifiable {
             lines.append("WARNING: \(warning)")
         }
         lines.append("")
-        lines.append("Band (Hz) |   EDT   |   T20   |   T30   | Range | Metric")
+        lines.append("Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric")
         for band in report.bandDecays {
             func fmt(_ v: Double?) -> String { v.map { String(format: "%.3f s", $0) } ?? "   —   " }
             let range = band.usableDecayRangeDB.map { String(format: "%2.0f dB", $0) } ?? "  —  "
+            let window: String
+            if let start = band.windowStartDB, let end = band.windowEndDB {
+                window = String(format: "%.0f…%.0f", start, end)
+            } else {
+                window = "—"
+            }
             lines.append(String(
                 format: "%9.0f | %@ | %@ | %@ | %@ | %@",
-                band.centerFrequency, fmt(band.edt), fmt(band.t20), fmt(band.t30),
-                range, band.selectedMetric.rawValue
+                band.centerFrequency, fmt(band.edt), fmt(ReverbTime.bestEstimate(band)),
+                range, window, band.selectedMetric.rawValue
             ))
         }
         if let mid = report.midBandRT60 {
@@ -79,7 +94,13 @@ enum MeasurementConstants {
     static let ambientSeconds = 5
     static let sweepDuration = 10.0
     static let decayTailSeconds = 3.0
-    static let targetSNRdB = 45.0
+    /// Pink-noise headroom target per band. 27 dB of pink SNR corresponds
+    /// to ample SWEEP SNR (45+ dB): the sweep concentrates all energy in
+    /// one band at a time and deconvolution adds further processing gain,
+    /// worth roughly 15-20 dB over broadband pink noise. (The original
+    /// 45 dB pink target drove playback ~12 dB too loud and broke the
+    /// fixed fit window -- see the 2026-08-29 finding.)
+    static let targetSNRdB = 27.0
     static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
     static let maxSweepRecordingSeconds = 180.0
 }
@@ -133,6 +154,10 @@ final class MeasurementCoordinator: ObservableObject {
     @Published private(set) var ambientWarning: String?
     @Published private(set) var liveSNR: [BandSNR] = []
     @Published private(set) var trafficLight: TrafficLight = .tooQuiet
+    /// Broadband level of the pink noise measured while it was PLAYING
+    /// (continuously updated during level setting). Captured this way
+    /// because the user stops the noise before tapping continue.
+    private var lastActivePinkLevelDB: Double?
 
     private let engine = AudioMeasurementEngine()
     private var ambientBuffer: [Double] = []
@@ -219,6 +244,12 @@ final class MeasurementCoordinator: ObservableObject {
             worst = min(worst, snr)
         }
         liveSNR = snrs
+        // Track the pink level only while the noise is actually playing.
+        let broadband = Self.broadbandLevelDB(recent)
+        let ambientBroadband = Self.broadbandLevelDB(ambientBuffer)
+        if broadband > ambientBroadband + 15 {
+            lastActivePinkLevelDB = broadband
+        }
         if clippedCount > 5 {
             trafficLight = .clipping
         } else if worst >= MeasurementConstants.targetSNRdB {
@@ -232,8 +263,7 @@ final class MeasurementCoordinator: ObservableObject {
     /// pink-noise level as the expectation for the sweep pass.
     func confirmLevel() {
         meteringTask?.cancel()
-        let recent = engine.recentSamples(1.0)
-        pinkLevelDB = recent.isEmpty ? nil : Self.broadbandLevelDB(recent)
+        pinkLevelDB = lastActivePinkLevelDB
         _ = engine.stopCapture() // level-setting audio is discarded
         startSweepRecording()
     }
@@ -295,6 +325,7 @@ final class MeasurementCoordinator: ObservableObject {
         let recording = engine.stopCapture()
         let fs = engine.sampleRate
         let inputDescription = engine.inputDescription
+        let setupReport = engine.setupReport
         let ambient = ambientBuffer
         let pinkLevel = pinkLevelDB
 
@@ -302,7 +333,8 @@ final class MeasurementCoordinator: ObservableObject {
             let outcome = Self.process(
                 recording: recording, ambient: ambient,
                 pinkLevelDB: pinkLevel, sampleRate: fs,
-                inputDescription: inputDescription
+                inputDescription: inputDescription,
+                captureSetupReport: setupReport
             )
             await MainActor.run {
                 guard let self else { return }
@@ -347,7 +379,8 @@ final class MeasurementCoordinator: ObservableObject {
         ambient: [Double],
         pinkLevelDB: Double?,
         sampleRate fs: Double,
-        inputDescription: String
+        inputDescription: String,
+        captureSetupReport: String = ""
     ) -> Result<MeasurementResult, MeasurementFailure> {
         let sweep = SineSweep(parameters: .init(
             startFrequency: 20, endFrequency: 20_000,
@@ -402,7 +435,7 @@ final class MeasurementCoordinator: ObservableObject {
             let expectedOffset = sweepFileRMS - pinkFileRMS
             let measuredSweep = broadbandLevelDB(sweepRegion)
             let deviation = (measuredSweep - pinkLevelDB) - expectedOffset
-            if abs(deviation) > 6 {
+            if abs(deviation) > 10 {
                 levelChangeWarning = String(
                     format: "The sweep arrived %.0f dB %@ than the level you set with pink noise — the volume changed between stages. Consider redoing the measurement at the confirmed level.",
                     abs(deviation), deviation > 0 ? "louder" : "quieter"
@@ -444,6 +477,7 @@ final class MeasurementCoordinator: ObservableObject {
             snrDB: snr,
             sampleRate: fs,
             inputDescription: inputDescription,
+            captureSetupReport: captureSetupReport,
             levelChangeWarning: levelChangeWarning,
             recordingURL: savedURL
         ))

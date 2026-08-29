@@ -147,12 +147,20 @@ manual L×W×H entry both reduce to `RoomGeometry`.
   −20…−30 % and produced a physically impossible 8 kHz > 4 kHz decay). The
   iOS capture path reads channel 0 only; the CLI states which channel it
   used.
-- **Adaptive RT metric selection:** per band, from the usable decay range
-  above the EDC noise plateau (with 10 dB safety margin): ≥ 40 dB → T30,
-  25–40 dB → T20, < 25 dB → band reported unmeasurable. The selected metric
-  is carried in `BandDecay.selectedMetric` and surfaced in every report.
-  Justified on real data: a −43 dB plateau biased T30 +19 % vs REW while T20
-  stayed at +3 %.
+- **Adaptive fit windows (Topt-equivalent), never fixed offsets:** the fit
+  window is searched per band (candidate starts −5…−50 dB, spans 30/25/20 dB,
+  most linear window wins, larger spans and near-top starts preferred), and
+  the chosen window is reported with every result. Justified twice on real
+  data: a −43 dB noise plateau biased fixed-window T30 +19 % while T20 read
+  +3 %; and a 12 dB-too-loud playback raised the direct-to-reverberant ratio
+  to 60 dB, putting the entire −5…−35 dB window inside the direct pulse
+  (4 kHz "T30" = 0.064 s) while refitting the same curve at −25…−55 dB
+  recovered the room's true 0.49 s. Usable range is reverberant-referenced
+  (from the linear region's top, never peak-above-noise). Labels: near-top
+  start with ≥ 30 dB span → T30, ≥ 20 dB → T20, lowered start → Topt,
+  nothing fittable → unmeasurable. Sub-20 ms "decays" are refused outright
+  (misplaced-fit signature), and a direct-to-reverberant ratio above 35 dB
+  triggers a too-loud-playback warning (healthy captures: ~20–30 dB).
 - **Mic calibration:** correction curves (built-in per-device or user-loaded
   UMIK-style files) apply to frequency-response metrics ONLY, never to decay
   or clarity (relative time-domain metrics). Enforced structurally: the decay

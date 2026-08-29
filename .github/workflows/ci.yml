@@ -17,10 +17,13 @@ jobs:
         run: swift test
 
   ios-build:
-    name: iOS app type-check build (Simulator, unsigned)
+    name: iOS build + engine tests via vDSP (macOS)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Run engine tests on the Accelerate/vDSP FFT path
+        working-directory: RoombrixCore
+        run: swift test
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate Xcode project
