@@ -55,14 +55,32 @@ cd roombrix/ios/Roombrix && xcodegen generate && open Roombrix.xcodeproj
 
 ## Step 5 — what to do in the app, and what to hand back
 
-1. On the Measure tab, first tap **"Verify AGC is off"** (device check —
-   plays three tones). Share the result text back to me (it fills your
-   device's row in the quirks table).
-2. Then measure the same room as before: phone at the listening position,
-   run **"I'll play the test file from my system"** with the usual
-   `roombrix_stimulus_48k.wav`, or **"Play through this phone's route"**
-   if the phone can reach your system via AirPlay.
-3. On the results screen use the two share buttons and send me:
+The phone never plays the test sounds — it is the measuring instrument.
+You play two files through your own system.
+
+1. **Send the test files to your system.** On the Measure tab, share both
+   files (AirDrop to your Mac, Save to Files, USB stick — whatever suits
+   your setup): the **pink noise** (level setting) and the **measurement
+   sweep**. They're also visible in the Files app under Roombrix.
+2. **Place the phone** at your listening position at ear height — on a
+   stand or resting screen-up on a cushion. Don't hold it.
+3. **Device check (once):** loop the pink-noise file at a steady,
+   comfortable volume, then tap **"Run device check"** (records 8 s and
+   verifies the mic's gain control is really off). Share the result text
+   back to me — it fills your device's row in the quirks table.
+4. **Measure** — the app walks you through three stages:
+   - **Background noise (5 s):** stay quiet. The app shows your room's
+     noise floor per band and warns if something (HVAC, fridge, traffic)
+     should be turned off first.
+   - **Level setting:** play the pink-noise file on loop and raise your
+     system volume until all bands show green (target ≥ 45 dB headroom;
+     loud but never painful). Then STOP the pink noise, leave the volume
+     where it is, and tap continue.
+   - **Sweep:** play the sweep file at that same volume. Recording is
+     already running — walking back to your seat is fine, footsteps don't
+     hurt. It stops automatically after the sweep and the room's decay
+     (there's also a manual stop button).
+5. On the results screen use the two share buttons and send me:
    - the **text report**, and
    - the **raw recording WAV** (upload into `validation/recordings/` as
      before — I'll verify the app's numbers match the CLI bit-for-bit and

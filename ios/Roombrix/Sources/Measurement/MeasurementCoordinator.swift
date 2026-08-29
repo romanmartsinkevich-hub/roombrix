@@ -16,11 +16,13 @@ struct MeasurementResult: Identifiable {
     let snrDB: Double?
     let sampleRate: Double
     let inputDescription: String
+    /// Set when the sweep arrived at a clearly different level than the
+    /// pink-noise pass — the user changed the volume between stages.
+    let levelChangeWarning: String?
     /// The raw capture, saved as WAV into Documents for hand-back
     /// verification against the CLI.
     let recordingURL: URL?
 
-    /// CLI-equivalent text report (band table + summary), shareable.
     var reportText: String {
         var lines: [String] = []
         lines.append("Roombrix measurement — \(date.formatted(date: .abbreviated, time: .standard))")
@@ -34,6 +36,9 @@ struct MeasurementResult: Identifiable {
         }
         if let drift = clockDriftPPM {
             lines.append(String(format: "Clock drift: %+.0f ppm", drift))
+        }
+        if let warning = levelChangeWarning {
+            lines.append("WARNING: \(warning)")
         }
         lines.append("")
         lines.append("Band (Hz) |   EDT   |   T20   |   T30   | Range | Metric")
@@ -60,10 +65,29 @@ struct MeasurementResult: Identifiable {
     }
 }
 
-/// Drives one full measurement:
-/// ambient capture → stimulus playback (or listen-only) → intake gates
-/// (clipping, length, marker confidence, quiet precedence, drift) →
-/// deconvolution → metrics. Mirrors `roombrix-validate measure` exactly.
+/// Per-band live/ambient level for the UI.
+struct BandLevel: Identifiable {
+    var id: Double { frequency }
+    let frequency: Double
+    let levelDB: Double
+}
+
+struct BandSNR: Identifiable {
+    var id: Double { frequency }
+    let frequency: Double
+    let snrDB: Double
+}
+
+/// Three-stage measurement flow. The phone NEVER plays audio — the user
+/// plays the stimulus package (pink noise for level setting, then the
+/// sweep) through their own system while the phone records:
+///
+///   AMBIENT  → 5 s of silence, per-band noise floor
+///   LEVEL SET → user loops pink noise; live per-band SNR vs the ambient
+///               floor; target ≥ 45 dB in 250 Hz–4 kHz (makes T30 usable
+///               in every band); traffic-light UI
+///   MEASURE  → user plays the sweep at the SAME volume; auto-stop after
+///               signal + decay tail; intake gates; metrics
 @MainActor
 final class MeasurementCoordinator: ObservableObject {
 
@@ -71,107 +95,202 @@ final class MeasurementCoordinator: ObservableObject {
         case idle
         case preparing
         case capturingAmbient(secondsLeft: Int)
-        case playing(secondsLeft: Int)
-        case waitingForExternalPlayback
+        case ambientReview
+        case levelSetting
+        case waitingForSweep
+        case recordingSweep
         case processing
         case done
         case failed(String)
     }
 
-    enum PlaybackPath {
-        /// The app plays the stimulus through the current output route.
-        case inApp
-        /// The user plays the exported stimulus file from their own system;
-        /// the app only listens.
-        case listenOnly
+    enum TrafficLight {
+        case tooQuiet, good, clipping
     }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var result: MeasurementResult?
+    @Published private(set) var ambientBandLevels: [BandLevel] = []
+    @Published private(set) var ambientWarning: String?
+    @Published private(set) var liveSNR: [BandSNR] = []
+    @Published private(set) var trafficLight: TrafficLight = .tooQuiet
 
     private let engine = AudioMeasurementEngine()
-    private var sweep: SineSweep?
-    private var marker: TimingReference.Marker?
+    private var ambientBuffer: [Double] = []
+    private var ambientBandsByFrequency: [Double: Double] = [:]
+    private var pinkLevelDB: Double?
+    private var meteringTask: Task<Void, Never>?
+    private var sweepWatchTask: Task<Void, Never>?
 
+    static let ambientSeconds = 5
     static let sweepDuration = 10.0
-    static let ambientSeconds = 3
     static let decayTailSeconds = 3.0
+    static let targetSNRdB = 45.0
+    static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
+    static let maxSweepRecordingSeconds = 180.0
 
     #if canImport(AVFAudio)
-    func start(path: PlaybackPath) async {
+
+    // MARK: - Stage A: ambient
+
+    func startAmbient() async {
         phase = .preparing
         result = nil
+        ambientWarning = nil
 
         guard await AudioMeasurementEngine.requestPermission() else {
             phase = .failed(AudioMeasurementEngine.EngineError.permissionDenied.localizedDescription)
             return
         }
-        let fs: Double
         do {
-            fs = try engine.configureSession()
+            _ = try engine.configureSession()
             try engine.startCapture()
         } catch {
             phase = .failed(error.localizedDescription)
             return
         }
-
-        // Stimulus DSP at the ACTUAL hardware rate (never assume 48 kHz).
-        let sweep = SineSweep(parameters: .init(
-            startFrequency: 20, endFrequency: 20_000,
-            duration: Self.sweepDuration, sampleRate: fs
-        ))
-        let marker = TimingReference.makeMarker(sampleRate: fs)
-        self.sweep = sweep
-        self.marker = marker
-
-        // Ambient lead-in (doubles as the noise-floor estimate).
         for remaining in stride(from: Self.ambientSeconds, to: 0, by: -1) {
             phase = .capturingAmbient(secondsLeft: remaining)
             try? await Task.sleep(for: .seconds(1))
         }
+        ambientBuffer = engine.stopCapture()
 
-        switch path {
-        case .inApp:
-            let stimulus = TimingReference.assembleStimulus(
-                marker: marker, payload: sweep.samples, includeEndMarker: true
-            ).map { $0 * 0.5 } // −6 dBFS headroom
-            engine.play(stimulus: stimulus)
-            let playSeconds = Int(Double(stimulus.count) / fs) + Int(Self.decayTailSeconds) + 1
-            for remaining in stride(from: playSeconds, to: 0, by: -1) {
-                phase = .playing(secondsLeft: remaining)
-                try? await Task.sleep(for: .seconds(1))
-            }
-            finishCapture()
-        case .listenOnly:
-            phase = .waitingForExternalPlayback
-            // UI calls `finishListenOnly()` when the user's file has ended.
+        let fs = engine.sampleRate
+        var bands: [BandLevel] = []
+        ambientBandsByFrequency.removeAll()
+        for center in OctaveBand.standardCenters where center < fs / 2 {
+            let level = Self.bandLevelDB(ambientBuffer, center: center, sampleRate: fs)
+            bands.append(BandLevel(frequency: center, levelDB: level))
+            ambientBandsByFrequency[center] = level
         }
+        ambientBandLevels = bands
+
+        let broadband = Self.broadbandLevelDB(ambientBuffer)
+        if broadband > -45 {
+            ambientWarning = "Background noise is on the high side. If something is running — HVAC, fridge, open window, traffic — turning it off now will make every result more reliable."
+        }
+        phase = .ambientReview
     }
 
-    func finishListenOnly() {
-        guard phase == .waitingForExternalPlayback else { return }
-        finishCapture()
-    }
+    // MARK: - Stage B: level setting (pink noise)
 
-    func cancel() {
-        _ = engine.stopCapture()
-        phase = .idle
-    }
-
-    private func finishCapture() {
-        phase = .processing
-        let recording = engine.stopCapture()
-        guard let sweep, let marker else {
-            phase = .failed("Internal error: stimulus not prepared.")
+    func startLevelSetting() {
+        do {
+            try engine.startCapture()
+        } catch {
+            phase = .failed(error.localizedDescription)
             return
         }
+        phase = .levelSetting
+        meteringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(400))
+                await self?.updateLiveMeters()
+            }
+        }
+    }
+
+    private func updateLiveMeters() {
+        guard phase == .levelSetting else { return }
+        let fs = engine.sampleRate
+        let recent = engine.recentSamples(1.0)
+        guard recent.count > Int(0.5 * fs) else { return }
+
+        let clippedCount = recent.lazy.filter { abs($0) >= 0.99 }.count
+        var snrs: [BandSNR] = []
+        var worst = Double.infinity
+        for center in Self.snrBands where center < fs / 2 {
+            let live = Self.bandLevelDB(recent, center: center, sampleRate: fs)
+            let ambient = ambientBandsByFrequency[center] ?? -100
+            let snr = live - ambient
+            snrs.append(BandSNR(frequency: center, snrDB: snr))
+            worst = min(worst, snr)
+        }
+        liveSNR = snrs
+        if clippedCount > 5 {
+            trafficLight = .clipping
+        } else if worst >= Self.targetSNRdB {
+            trafficLight = .good
+        } else {
+            trafficLight = .tooQuiet
+        }
+    }
+
+    /// User confirms the volume is set (ideally on green). Captures the
+    /// pink-noise level as the expectation for the sweep pass.
+    func confirmLevel() {
+        meteringTask?.cancel()
+        let recent = engine.recentSamples(1.0)
+        pinkLevelDB = recent.isEmpty ? nil : Self.broadbandLevelDB(recent)
+        _ = engine.stopCapture() // level-setting audio is discarded
+        startSweepRecording()
+    }
+
+    // MARK: - Stage C: sweep
+
+    private func startSweepRecording() {
+        do {
+            try engine.startCapture()
+        } catch {
+            phase = .failed(error.localizedDescription)
+            return
+        }
+        phase = .waitingForSweep
+
+        let fs = engine.sampleRate
+        let ambientBroadband = Self.broadbandLevelDB(ambientBuffer)
+        sweepWatchTask = Task { [weak self] in
+            var signalSeconds = 0.0
+            var quietSecondsAfterSignal = 0.0
+            let tick = 0.5
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(tick))
+                guard let self else { return }
+                let elapsed = self.engine.capturedDuration
+                let recent = self.engine.recentSamples(1.0)
+                guard recent.count > Int(0.5 * fs) else { continue }
+                let level = Self.broadbandLevelDB(recent)
+
+                await MainActor.run {
+                    if level > ambientBroadband + 15, self.phase == .waitingForSweep {
+                        self.phase = .recordingSweep
+                    }
+                }
+                if level > ambientBroadband + 15 {
+                    signalSeconds += tick
+                    quietSecondsAfterSignal = 0
+                } else if signalSeconds > 0 {
+                    quietSecondsAfterSignal += tick
+                }
+
+                // Auto-stop: enough signal seen (sweep ≈ 10 s) and quiet for
+                // decay tail + margin — or the hard cap.
+                let sawSweep = signalSeconds >= Self.sweepDuration * 0.7
+                let tailDone = quietSecondsAfterSignal >= Self.decayTailSeconds + 1.5
+                if (sawSweep && tailDone) || elapsed > Self.maxSweepRecordingSeconds {
+                    await MainActor.run { self.finishSweep() }
+                    return
+                }
+            }
+        }
+    }
+
+    /// Manual stop (always available); also called by the auto-stop watcher.
+    func finishSweep() {
+        guard phase == .waitingForSweep || phase == .recordingSweep else { return }
+        sweepWatchTask?.cancel()
+        phase = .processing
+        let recording = engine.stopCapture()
         let fs = engine.sampleRate
         let inputDescription = engine.inputDescription
+        let ambient = ambientBuffer
+        let pinkLevel = pinkLevelDB
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let outcome = Self.process(
-                recording: recording, sweep: sweep, marker: marker,
-                sampleRate: fs, inputDescription: inputDescription
+                recording: recording, ambient: ambient,
+                pinkLevelDB: pinkLevel, sampleRate: fs,
+                inputDescription: inputDescription
             )
             await MainActor.run {
                 guard let self else { return }
@@ -185,17 +304,45 @@ final class MeasurementCoordinator: ObservableObject {
             }
         }
     }
+
+    func cancel() {
+        meteringTask?.cancel()
+        sweepWatchTask?.cancel()
+        _ = engine.stopCapture()
+        phase = .idle
+    }
     #endif
+
+    // MARK: - Level helpers
+
+    nonisolated static func bandLevelDB(_ samples: [Double], center: Double, sampleRate: Double) -> Double {
+        guard !samples.isEmpty else { return -120 }
+        let banded = OctaveBand.filtered(samples, center: center, sampleRate: sampleRate)
+        let power = banded.reduce(0) { $0 + $1 * $1 } / Double(banded.count)
+        return 10 * log10(max(power, 1e-14))
+    }
+
+    nonisolated static func broadbandLevelDB(_ samples: [Double]) -> Double {
+        guard !samples.isEmpty else { return -120 }
+        let power = samples.reduce(0) { $0 + $1 * $1 } / Double(samples.count)
+        return 10 * log10(max(power, 1e-14))
+    }
 
     // MARK: - Processing (pure; mirrors the CLI gates one for one)
 
     nonisolated static func process(
         recording: [Double],
-        sweep: SineSweep,
-        marker: TimingReference.Marker,
+        ambient: [Double],
+        pinkLevelDB: Double?,
         sampleRate fs: Double,
         inputDescription: String
     ) -> Result<MeasurementResult, String> {
+        let sweep = SineSweep(parameters: .init(
+            startFrequency: 20, endFrequency: 20_000,
+            duration: sweepDuration, sampleRate: fs
+        ))
+        let marker = TimingReference.makeMarker(sampleRate: fs)
+
         // Clipping gate.
         let clipped = recording.lazy.filter { abs($0) >= 0.99 }.count
         if clipped > 10 {
@@ -204,55 +351,66 @@ final class MeasurementCoordinator: ObservableObject {
 
         // Length gate.
         let guardSamples = Int(marker.guardInterval * fs)
-        let minimum = marker.samples.count + guardSamples + sweep.samples.count + Int(3 * fs)
-        guard recording.count >= minimum else {
-            return .failure("The recording ended before the sweep finished. Keep the app running until the countdown completes.")
+        let requiredTrailing = marker.samples.count + guardSamples + sweep.samples.count
+        guard recording.count >= requiredTrailing + Int(3 * fs) else {
+            return .failure("The recording ended before the sweep finished. Let the sweep play to the end, then wait a few seconds before stopping.")
         }
 
         // Marker detection with plausibility gates.
         let spacing = TimingReference.expectedMarkerSpacing(marker: marker, payloadCount: sweep.samples.count)
-        let requiredTrailing = marker.samples.count + guardSamples + sweep.samples.count
         guard let detection = TimingReference.detect(
             marker: marker, in: recording,
             expectedMarkerSpacing: spacing,
             requiredTrailingSamples: requiredTrailing
         ), detection.confidenceDB >= TimingReference.minimumConfidenceDB else {
-            return .failure("The timing chirp was not detected. Raise the playback volume (the chirp at the start should be clearly audible) and measure again.")
+            return .failure("The timing chirp was not detected. Make sure you played the Roombrix sweep file (it starts with a short chirp) at the volume you set, and measure again.")
         }
         if let quiet = detection.preMarkerQuietDB, quiet < TimingReference.minimumPreMarkerQuietDB {
-            return .failure("The measurement signal was not preceded by silence — possibly a false detection or loud background noise. Keep the room quiet during the countdown and measure again.")
+            return .failure("The chirp was not preceded by silence — possibly a false detection, or the pink noise was still playing. Stop the pink noise fully before starting the sweep, then measure again.")
         }
         if let drift = detection.clockDriftPPM, abs(drift) > TimingReference.maximumPlausibleDriftPPM {
-            return .failure("Playback timing was inconsistent (possible dropout or stutter). Measure again; if it repeats, try a wired or different playback route.")
+            return .failure("Playback timing was inconsistent (possible dropout or stutter). Measure again; if it repeats, try a different playback source.")
         }
 
-        // SNR estimate from the ambient lead-in.
-        var snr: Double?
-        let ambientEnd = max(0, detection.markerStartIndex - Int(0.05 * fs))
-        if ambientEnd > Int(0.3 * fs) {
-            let ambient = Array(recording[..<ambientEnd])
-            let sweepStart = min(detection.stimulusStartIndex, recording.count - 1)
-            let sweepEnd = min(sweepStart + sweep.samples.count, recording.count)
-            snr = NoiseFloor.signalToNoiseDB(
-                signal: Array(recording[sweepStart..<sweepEnd]), ambient: ambient
-            )
+        // SNR from the dedicated ambient stage.
+        let sweepStart = min(detection.stimulusStartIndex, recording.count - 1)
+        let sweepEnd = min(sweepStart + sweep.samples.count, recording.count)
+        let sweepRegion = Array(recording[sweepStart..<sweepEnd])
+        let snr = NoiseFloor.signalToNoiseDB(signal: sweepRegion, ambient: ambient)
+
+        // Level continuity vs the pink-noise pass. Both files are peak
+        // -6 dBFS; the sweep's payload RMS sits ~9 dB above pink RMS, so
+        // expected sweep level = pink level + digital offset of the files.
+        var levelChangeWarning: String?
+        if let pinkLevelDB {
+            let sweepFileRMS = 10 * log10(
+                sweep.samples.reduce(0) { $0 + $1 * $1 } / Double(sweep.samples.count)
+            ) - 6 // payload is unit-peak; file is scaled to −6 dBFS peak
+            let pinkFileRMS = -6.0 - StimulusPackage.pinkCrestFactorDB
+            let expectedOffset = sweepFileRMS - pinkFileRMS
+            let measuredSweep = broadbandLevelDB(sweepRegion)
+            let deviation = (measuredSweep - pinkLevelDB) - expectedOffset
+            if abs(deviation) > 6 {
+                levelChangeWarning = String(
+                    format: "The sweep arrived %.0f dB %@ than the level you set with pink noise — the volume changed between stages. Consider redoing the measurement at the confirmed level.",
+                    abs(deviation), deviation > 0 ? "louder" : "quieter"
+                )
+            }
         }
 
         // Deconvolution + metrics.
-        let aligned = Array(recording[min(detection.stimulusStartIndex, recording.count - 1)...])
+        let aligned = Array(recording[sweepStart...])
         let deconvolved = Deconvolution.impulseResponse(from: aligned, sweep: sweep)
         let ir = ImpulseResponse(
             samples: deconvolved.impulseResponse,
             sampleRate: deconvolved.sampleRate,
             directIndex: deconvolved.peakIndex
         )
-        let ambient = ambientEnd > 0 ? Array(recording[..<ambientEnd]) : nil
         let report = RoomAnalyzer.analyze(primary: ir, ambient: ambient)
 
         // Save the raw capture for CLI cross-verification.
         var savedURL: URL?
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        if let documents {
+        if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             let stamp = ISO8601DateFormatter().string(from: Date())
                 .replacingOccurrences(of: ":", with: "-")
             let url = documents.appendingPathComponent("roombrix_capture_\(stamp).wav")
@@ -260,7 +418,7 @@ final class MeasurementCoordinator: ObservableObject {
                 try WAVFile.writeFloat32Mono(samples: recording, sampleRate: fs, to: url)
                 savedURL = url
             } catch {
-                savedURL = nil // non-fatal: metrics still stand
+                savedURL = nil // non-fatal
             }
         }
 
@@ -274,6 +432,7 @@ final class MeasurementCoordinator: ObservableObject {
             snrDB: snr,
             sampleRate: fs,
             inputDescription: inputDescription,
+            levelChangeWarning: levelChangeWarning,
             recordingURL: savedURL
         ))
     }

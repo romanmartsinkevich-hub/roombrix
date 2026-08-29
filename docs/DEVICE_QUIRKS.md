@@ -14,6 +14,7 @@ Verification protocol per device:
 
 | Model | iOS ver. tested | Actual sample rate | AGC off confirmed | LF roll-off (−3 dB) | Correction curve id | Notes |
 |---|---|---|---|---|---|---|
+| **iPhone 15 Plus (MU183ZD/A)** | pending | pending | pending — run in-app device check | — | — | Primary validation device (owner's). Fill from the app's device-check report. |
 | iPhone 12 | — | — | — | — | `ip12-v0` (placeholder) | Minimum supported device; performance budget baseline |
 | iPhone 12 mini | — | — | — | — | — | |
 | iPhone 13 | — | — | — | — | — | |

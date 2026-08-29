@@ -213,19 +213,29 @@ public struct TimingReference: Sendable {
         }
 
         // Quiet-precedence measurement on the RESOLVED start marker: compare
-        // its window against the 0.25 s ending 50 ms before it.
+        // its window against the MEDIAN block level of the 0.5 s ending
+        // 50 ms before it. The median (10 ms blocks) makes the gate robust
+        // to impulsive lead-in noise — footsteps and chair creaks as the
+        // user walks back from their playback system must not fail an
+        // otherwise quiet lead-in.
         var preMarkerQuietDB: Double?
         let preGap = Int(0.05 * marker.sampleRate)
-        let preLength = Int(0.25 * marker.sampleRate)
+        let preLength = Int(0.5 * marker.sampleRate)
+        let blockLength = max(1, Int(0.01 * marker.sampleRate))
         let preEnd = startIndex - preGap
         let preStart = preEnd - preLength
-        if preStart >= 0, preEnd > preStart {
+        if preStart >= 0, preEnd - preStart >= 4 * blockLength {
             let markerEnd = min(startIndex + marker.samples.count, recording.count)
             let markerPower = (prefixEnergy[markerEnd] - prefixEnergy[startIndex])
                 / Double(max(markerEnd - startIndex, 1))
-            let prePower = (prefixEnergy[preEnd] - prefixEnergy[preStart])
-                / Double(preEnd - preStart)
-            preMarkerQuietDB = 10 * log10(max(markerPower, 1e-14) / max(prePower, 1e-14))
+            var blockPowers: [Double] = []
+            var b = preStart
+            while b + blockLength <= preEnd {
+                blockPowers.append((prefixEnergy[b + blockLength] - prefixEnergy[b]) / Double(blockLength))
+                b += blockLength
+            }
+            let medianPre = blockPowers.sorted()[blockPowers.count / 2]
+            preMarkerQuietDB = 10 * log10(max(markerPower, 1e-14) / max(medianPre, 1e-14))
         }
 
         let stimulusStart = startIndex + marker.samples.count

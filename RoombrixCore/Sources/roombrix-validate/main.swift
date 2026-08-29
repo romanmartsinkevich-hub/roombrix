@@ -28,6 +28,11 @@ import RoombrixValidation
 //       noise floor, truncation point, and T20/T30 under different noise
 //       margins — for pinning down why two implementations disagree.
 //
+//   package <output-dir> [--rate 48000] [--pink-duration 30]
+//       Export the complete measurement package: the level-setting pink
+//       noise (loop-clean) and the validated sweep stimulus, both 24-bit
+//       PCM at -6 dBFS peak.
+//
 // Exit codes: 0 = OK/PASS, 1 = error or refused input, 2 = REW diff FAIL.
 
 func fail(_ message: String) -> Never {
@@ -386,6 +391,31 @@ case "edc":
         print(String(format: "  %4.0f…%4.0f dB | %@", upper, lower, fmt(f)))
     }
 
+case "package":
+    guard args.count >= 2 else { fail("package: missing <output-dir> argument") }
+    let rate = flagValue("--rate", in: args).flatMap(Double.init) ?? 48_000
+    let pinkDuration = flagValue("--pink-duration", in: args).flatMap(Double.init) ?? 30
+    let directory = URL(fileURLWithPath: args[1], isDirectory: true)
+    do {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let pink = PinkNoise.generate(duration: pinkDuration, sampleRate: rate, peakLevelDBFS: -6)
+        let pinkURL = directory.appendingPathComponent("roombrix_pink_noise_\(Int(rate / 1_000))k.wav")
+        try WAVFile.writePCM24Mono(samples: pink, sampleRate: rate, to: pinkURL)
+        print("Wrote level-setting noise: \(pinkURL.path) (\(Int(pinkDuration)) s, loop it)")
+
+        let sweep = SineSweep(parameters: .init(duration: 10, sampleRate: rate))
+        let marker = TimingReference.makeMarker(sampleRate: rate)
+        let stimulus = TimingReference.assembleStimulus(marker: marker, payload: sweep.samples)
+        let gain = pow(10.0, -6.0 / 20)
+        let samples = stimulus.map { $0 * gain } + [Double](repeating: 0, count: Int(5 * rate))
+        let sweepURL = directory.appendingPathComponent("roombrix_stimulus_\(Int(rate / 1_000))k.wav")
+        try WAVFile.writePCM24Mono(samples: samples, sampleRate: rate, to: sweepURL)
+        print("Wrote measurement sweep:   \(sweepURL.path) (identical layout to the validated stimulus)")
+    } catch {
+        fail("Could not write package: \(error)")
+    }
+
 default:
-    fail("Unknown command: \(command). Use `measure`, `rt60`, `stimulus`, or `edc`.")
+    fail("Unknown command: \(command). Use `measure`, `rt60`, `stimulus`, `edc`, or `package`.")
 }

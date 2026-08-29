@@ -120,6 +120,26 @@ manual L×W×H entry both reduce to `RoomGeometry`.
 
 ## Product-level measurement policies (binding for app + CLI)
 
+- **The phone never plays measurement audio.** There is no in-app playback
+  path — no output-route handling, no AirPlay/BT output code. The app
+  generates and shares the stimulus package (pink noise + sweep); the user
+  plays it through their own system; the phone only records. Rationale: we
+  measure the user's actual system, and every output-route failure mode
+  disappears.
+- **Two-stage level protocol before every sweep:** (a) 5 s ambient capture →
+  per-band noise floor, surfaced to the user; (b) pink-noise level pass with
+  live per-band headroom (target ≥ 45 dB SNR in 250 Hz–4 kHz — makes T30
+  usable in every band) and clipping indicator; (c) sweep at the confirmed
+  level, with a level-continuity check that warns when the sweep arrives at
+  a clearly different level than the pink pass.
+- **v1 room purpose: Listening only.** Other purposes stay engine-supported
+  (typed, tested) but hidden and uncalibrated in the UI.
+- **Milestone 3 geometry: manual entry is the primary path.** All geometry
+  features (modal prediction, first-reflection points, placement view) must
+  work from manually entered L×W×H plus marked speaker/seat positions.
+  RoomPlan is an enhancement behind a device-capability check and must
+  degrade cleanly on non-LiDAR devices with no dead ends.
+
 - **Channel handling:** analyze exactly ONE explicit input channel (first
   channel); never sum/downmix channels. Downmixing a stereo or mid-side
   external mic partially cancels reverberant energy and biases decay

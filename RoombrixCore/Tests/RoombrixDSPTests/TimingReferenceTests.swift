@@ -81,8 +81,8 @@ final class TimingReferenceTests: XCTestCase {
         ir[0] += 1.0
         let wet = FFT.convolve(stimulus, ir)
 
-        // 0.5 s lead-in: enough room for the 0.25 s + 50 ms quiet-precedence window.
-        let offset = 8_000
+        // 0.75 s lead-in: enough room for the 0.5 s + 50 ms quiet-precedence window.
+        let offset = 12_000
         var recording = [Double](repeating: 0, count: offset + wet.count + 8_000)
         for (i, v) in wet.enumerated() { recording[offset + i] += v }
         for i in 0..<recording.count {
@@ -128,12 +128,39 @@ final class TimingReferenceTests: XCTestCase {
         }
     }
 
+    func testQuietGateTolerantOfFootstepsInLeadIn() {
+        // The user walks back from their playback system: impulsive footsteps
+        // in an otherwise quiet lead-in. The median-based quiet gate must NOT
+        // false-fail on these transients.
+        let fs = 16_000.0
+        let marker = TimingReference.makeMarker(sampleRate: fs, duration: 0.1, guardInterval: 0.2)
+        var rng = FFTTestsSeededGenerator(seed: 12)
+        let offset = 20_000
+        var recording = (0..<60_000).map { _ in Double.random(in: -0.005...0.005, using: &rng) }
+        // Footsteps: loud 30 ms thumps every ~0.4 s through the lead-in,
+        // the last one 150 ms before the marker.
+        for step in stride(from: 2_000, through: offset - 2_400, by: 6_400) {
+            for i in 0..<Int(0.03 * fs) {
+                recording[step + i] += Double.random(in: -0.6...0.6, using: &rng)
+                    * (1 - Double(i) / (0.03 * fs))
+            }
+        }
+        for (i, v) in marker.samples.enumerated() { recording[offset + i] += v }
+
+        let detection = TimingReference.detect(marker: marker, in: recording)
+        XCTAssertNotNil(detection)
+        assertClose(detection!.markerStartIndex, offset, tolerance: 2)
+        XCTAssertNotNil(detection!.preMarkerQuietDB)
+        XCTAssertGreaterThan(detection!.preMarkerQuietDB!, TimingReference.minimumPreMarkerQuietDB,
+                             "impulsive footsteps must not fail the quiet gate")
+    }
+
     func testQuietPrecedenceLowWhenMarkerFollowsLoudSignal() {
         let fs = 16_000.0
         let marker = TimingReference.makeMarker(sampleRate: fs, duration: 0.1, guardInterval: 0.2)
         var rng = FFTTestsSeededGenerator(seed: 11)
         // Loud noise right up to the marker (recording started mid-signal).
-        let offset = 8_000
+        let offset = 12_000
         var recording = (0..<40_000).map { _ in Double.random(in: -0.02...0.02, using: &rng) }
         for i in 0..<offset { recording[i] = Double.random(in: -0.8...0.8, using: &rng) }
         for (i, v) in marker.samples.enumerated() { recording[offset + i] += v }
