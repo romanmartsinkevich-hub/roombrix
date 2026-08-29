@@ -103,7 +103,29 @@ public struct TimingReference: Sendable {
         expectedMarkerSpacing: Int? = nil
     ) -> Detection? {
         guard recording.count >= marker.samples.count else { return nil }
-        let correlation = FFT.crossCorrelate(signal: recording, template: marker.samples)
+        let rawCorrelation = FFT.crossCorrelate(signal: recording, template: marker.samples)
+
+        // NORMALIZED cross-correlation: divide by the local window energy.
+        // Raw correlation rewards sheer energy, so the loud sweep region can
+        // out-correlate the true marker as the sweep passes through the
+        // marker's frequency band (observed on a reverberant synthetic
+        // fixture: detector locked onto the sweep at +8 s). Normalizing by
+        // the sliding RMS removes the loudness advantage; only genuine shape
+        // matches score high.
+        var prefixEnergy = [Double](repeating: 0, count: recording.count + 1)
+        for i in 0..<recording.count {
+            prefixEnergy[i + 1] = prefixEnergy[i] + recording[i] * recording[i]
+        }
+        let markerEnergy = marker.samples.reduce(0) { $0 + $1 * $1 }
+        // Epsilon keeps digitally-silent windows from dividing by zero.
+        let epsilon = max(prefixEnergy[recording.count] / Double(recording.count) * 1e-3, 1e-12)
+
+        var correlation = [Double](repeating: 0, count: recording.count)
+        for i in 0..<recording.count {
+            let end = min(i + marker.samples.count, recording.count)
+            let windowEnergy = prefixEnergy[end] - prefixEnergy[i]
+            correlation[i] = rawCorrelation[i] / ((windowEnergy + epsilon) * markerEnergy).squareRoot()
+        }
 
         var peakIndex = 0
         var peakValue = 0.0

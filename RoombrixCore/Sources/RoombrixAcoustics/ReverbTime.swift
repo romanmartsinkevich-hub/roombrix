@@ -16,25 +16,30 @@ public enum ReverbTime {
         /// Coefficient of determination of the T20 fit. Values well below 1
         /// indicate a bent (non-exponential) decay — often modal behavior.
         public let t20FitQuality: Double?
+        /// Coefficient of determination of the T30 fit.
+        public let t30FitQuality: Double?
 
         public init(
             centerFrequency: Double,
             t20: Double?,
             t30: Double?,
             edt: Double?,
-            t20FitQuality: Double?
+            t20FitQuality: Double?,
+            t30FitQuality: Double? = nil
         ) {
             self.centerFrequency = centerFrequency
             self.t20 = t20
             self.t30 = t30
             self.edt = edt
             self.t20FitQuality = t20FitQuality
+            self.t30FitQuality = t30FitQuality
         }
     }
 
     /// RT from a linear fit of the EDC between two levels.
     /// Returns (rt60, r²) or nil when the curve never spans the range.
-    static func fit(
+    /// Public for the validation harness's EDC diagnostics.
+    public static func fit(
         curve: SchroederIntegration.DecayCurve,
         from upperDB: Double,
         to lowerDB: Double
@@ -92,24 +97,38 @@ public enum ReverbTime {
                 t20: t20Fit.map { $0.rt60 },
                 t30: t30Fit.map { $0.rt60 },
                 edt: edtFit.map { $0.rt60 },
-                t20FitQuality: t20Fit.map { $0.rSquared }
+                t20FitQuality: t20Fit.map { $0.rSquared },
+                t30FitQuality: t30Fit.map { $0.rSquared }
             )
         }
     }
 
     /// Preferred single RT60 figure per band: T30 when available, else T20.
     ///
-    /// Bands whose decay fit is poor (low r² — noise-dominated or heavily
-    /// modal) return nil rather than a number: a garbage LF band would
-    /// otherwise poison the LF/mid ratio and trigger false bass diagnoses.
+    /// Two honesty gates, both discovered on real recordings:
+    /// - Fit quality: each estimate is gated by its OWN fit r² (a clean T20
+    ///   must not vouch for a noise-bent T30, or vice versa).
+    /// - Curvature: when T20 and T30 diverge wildly (ratio outside 0.5…2)
+    ///   the decay is not a single slope — typically a direct-sound cliff
+    ///   from a processed capture chain, where a steep, high-r² "fit" of the
+    ///   cliff yields confident-looking nonsense like T20 = 0.001 s. No
+    ///   single figure is honest there; return nil.
     public static func bestEstimate(
         _ band: BandDecay,
         minimumFitQuality: Double = 0.8
     ) -> Double? {
-        if let quality = band.t20FitQuality, quality < minimumFitQuality {
-            return nil
+        if let t20 = band.t20, let t30 = band.t30, t20 > 0 {
+            let curvature = t30 / t20
+            if curvature > 2 || curvature < 0.5 { return nil }
         }
-        return band.t30 ?? band.t20
+        if let t30 = band.t30,
+           (band.t30FitQuality ?? band.t20FitQuality ?? 1) >= minimumFitQuality {
+            return t30
+        }
+        if let t20 = band.t20, (band.t20FitQuality ?? 1) >= minimumFitQuality {
+            return t20
+        }
+        return nil
     }
 
     /// Mid-band RT60 (mean of 500 Hz and 1 kHz), the conventional headline figure.

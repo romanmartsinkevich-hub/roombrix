@@ -23,6 +23,11 @@ import RoombrixValidation
 //       Export the measurement stimulus (timing marker + guard + ESS sweep
 //       [+ end marker] + trailing silence).
 //
+//   edc <recording> --band <Hz> [--duration 10]
+//       Decay-curve diagnostics for one octave band of a raw recording:
+//       noise floor, truncation point, and T20/T30 under different noise
+//       margins — for pinning down why two implementations disagree.
+//
 // Exit codes: 0 = OK/PASS, 1 = error or refused input, 2 = REW diff FAIL.
 
 func fail(_ message: String) -> Never {
@@ -277,6 +282,75 @@ case "stimulus":
         fail("Could not write \(url.path): \(error)")
     }
 
+case "edc":
+    guard args.count >= 2 else { fail("edc: missing <recording> argument") }
+    guard let band = flagValue("--band", in: args).flatMap(Double.init) else {
+        fail("edc: missing --band <Hz>")
+    }
+    let url = URL(fileURLWithPath: args[1])
+    let sweepDuration = flagValue("--duration", in: args).flatMap(Double.init) ?? 10
+    let audio: WAVFile.Audio
+    do {
+        audio = try AudioLoader.load(url: url)
+    } catch {
+        fail("Could not read \(url.path): \(error)")
+    }
+    let fs = audio.sampleRate
+    let sweep = SineSweep(parameters: .init(
+        startFrequency: 20, endFrequency: 20_000, duration: sweepDuration, sampleRate: fs
+    ))
+    let marker = TimingReference.makeMarker(sampleRate: fs)
+    guard let detection = TimingReference.detect(marker: marker, in: audio.samples),
+          detection.confidenceDB >= TimingReference.minimumConfidenceDB
+    else { fail("Timing marker not found — is this a measurement recording?") }
+    let aligned = Array(audio.samples[min(detection.stimulusStartIndex, audio.samples.count - 1)...])
+    let deconvolved = Deconvolution.impulseResponse(from: aligned, sweep: sweep)
+    let ir = ImpulseResponse(
+        samples: deconvolved.impulseResponse,
+        sampleRate: deconvolved.sampleRate,
+        directIndex: deconvolved.peakIndex
+    )
+
+    let filtered = OctaveBand.filtered(ir.samples, center: band, sampleRate: ir.sampleRate)
+    print("EDC diagnostics: \(Int(band)) Hz octave band of \(url.lastPathComponent)")
+    print("margin = dB above the estimated noise floor at which backward integration truncates")
+    print("(margin -999 disables truncation: the full noisy tail is integrated)")
+    print("")
+    print("Margin (dB) | Noise floor | Truncation |   EDT   |   T20 (r²)      |   T30 (r²)")
+    print("------------|-------------|------------|---------|-----------------|----------------")
+    func fmt(_ f: (rt60: Double, rSquared: Double)?) -> String {
+        f.map { String(format: "%.3f s (%.3f)", $0.rt60, $0.rSquared) } ?? "   —           "
+    }
+    for margin in [4.0, 8.0, 12.0, -999.0] {
+        let curve = SchroederIntegration.decayCurve(
+            of: filtered, sampleRate: ir.sampleRate, noiseMarginDB: margin
+        )
+        let t20 = ReverbTime.fit(curve: curve, from: -5, to: -25)
+        let t30 = ReverbTime.fit(curve: curve, from: -5, to: -35)
+        let edt = ReverbTime.fit(curve: curve, from: -0.1, to: -10)
+        let label = margin <= -100 ? "  disabled " : String(format: "%10.0f ", margin)
+        print(String(
+            format: "%@| %8.1f dB | %7.3f s  | %@ | %@ | %@",
+            label, curve.noiseFloorDB,
+            Double(curve.truncationIndex) / ir.sampleRate,
+            edt.map { String(format: "%.3f s", $0.rt60) } ?? "   —   ",
+            fmt(t20), fmt(t30)
+        ))
+    }
+
+    // Fit-window sensitivity at the default margin: where the two fit points
+    // sit on a bent (cliff- or noise-contaminated) EDC changes the answer;
+    // this table shows by how much.
+    let curve = SchroederIntegration.decayCurve(of: filtered, sampleRate: ir.sampleRate)
+    print("")
+    print("Fit-window sensitivity (margin 8 dB):")
+    print("  Window        | RT60 (r²)")
+    print("  --------------|----------------")
+    for (upper, lower) in [(-5.0, -25.0), (-5.0, -35.0), (-10.0, -30.0), (-10.0, -40.0), (-15.0, -45.0), (-20.0, -50.0)] {
+        let f = ReverbTime.fit(curve: curve, from: upper, to: lower)
+        print(String(format: "  %4.0f…%4.0f dB | %@", upper, lower, fmt(f)))
+    }
+
 default:
-    fail("Unknown command: \(command). Use `measure`, `rt60`, or `stimulus`.")
+    fail("Unknown command: \(command). Use `measure`, `rt60`, `stimulus`, or `edc`.")
 }

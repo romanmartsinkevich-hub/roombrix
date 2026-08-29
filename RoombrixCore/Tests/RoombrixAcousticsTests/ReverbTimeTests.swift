@@ -84,6 +84,31 @@ final class ReverbTimeTests: XCTestCase {
         }
     }
 
+    func testBestEstimateGating() {
+        // Cliff artifact: T20 fits the direct-sound cliff with high r² but a
+        // nonsense value; T20/T30 curvature must gate the whole band.
+        let cliff = ReverbTime.BandDecay(
+            centerFrequency: 8_000, t20: 0.001, t30: 0.331, edt: nil,
+            t20FitQuality: 0.91, t30FitQuality: 0.36
+        )
+        XCTAssertNil(ReverbTime.bestEstimate(cliff))
+
+        // Poor T30 fit must not be vouched for by a clean T20 fit; falls
+        // back to the T20 value itself.
+        let noisyT30 = ReverbTime.BandDecay(
+            centerFrequency: 4_000, t20: 0.45, t30: 0.60, edt: nil,
+            t20FitQuality: 0.95, t30FitQuality: 0.40
+        )
+        XCTAssertEqual(ReverbTime.bestEstimate(noisyT30), 0.45)
+
+        // Healthy band: T30 preferred.
+        let clean = ReverbTime.BandDecay(
+            centerFrequency: 500, t20: 0.48, t30: 0.50, edt: nil,
+            t20FitQuality: 0.99, t30FitQuality: 0.99
+        )
+        XCTAssertEqual(ReverbTime.bestEstimate(clean), 0.50)
+    }
+
     func testRepeatability() {
         // Two different noise realizations of the same room must agree —
         // the analog of the brief's ±2-point repeatability requirement.
