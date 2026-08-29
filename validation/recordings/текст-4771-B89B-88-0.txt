@@ -1,0 +1,25 @@
+Roombrix measurement — 29 Aug 2026 at 20:50:47
+Input: Микрофон iPhone (MicrophoneBuiltIn) @ 48000 Hz
+Input port: Микрофон iPhone (MicrophoneBuiltIn)
+Data source: Снизу (of 3)
+Polar pattern requested: omnidirectional; granted: Omnidirectional
+Sample rate: 48000 Hz (preferred 48000)
+Mode .measurement accepted: true
+Direct-to-reverberant: 5.6 dB
+Marker confidence: 40.1 dB; latency 11.962 s
+Pre-marker quiet: 36.3 dB
+SNR estimate: 25.0 dB
+
+Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric
+       63 | 1.289 s | 3.320 s | 29 dB | -5…-30 | t20
+      125 | 1.208 s | 1.376 s | 31 dB | -5…-35 | t30
+      250 | 0.757 s | 1.051 s | 33 dB | -10…-40 | t30
+      500 | 0.013 s | 1.039 s | 31 dB | -20…-50 | topt
+     1000 | 0.003 s | 0.884 s | 31 dB | -25…-55 | topt
+     2000 | 0.002 s | 0.589 s | 42 dB | -20…-50 | topt
+     4000 | 0.001 s | 0.627 s | 34 dB | -35…-65 | topt
+     8000 |    —    | 0.463 s | 43 dB | -35…-65 | topt
+Mid-band RT60: 0.962 s
+LF/mid decay ratio: 1.99
+C80: +10.0 dB
+(Estimates from a consumer microphone, not lab measurements.)
