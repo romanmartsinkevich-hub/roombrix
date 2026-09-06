@@ -8,6 +8,17 @@ public enum ScoreEngine {
     /// Bump on any change that alters scores; stored with every measurement.
     public static let version = "1.0.0"
 
+    /// CALIBRATION STATUS — PROVISIONAL.
+    /// The v1 subscore weights (§4.1 of the brief) and the purpose targets
+    /// in `RoomPurpose` are design values validated against a single room.
+    /// Absolute calibration (what measured delta maps to what score delta)
+    /// waits for the multi-room validation dataset. Until then the UI must
+    /// carry `calibrationNote`; relative comparisons (before/after in the
+    /// same room, same engine version) are meaningful, absolute values may
+    /// shift with recalibration.
+    public static let calibrationIsProvisional = true
+    public static let calibrationNote = "Score calibration is provisional: targets and weights are v1 design values pending the multi-room dataset. Before/after comparisons are meaningful; the absolute number may shift with recalibration."
+
     public struct Input: Sendable {
         public var report: AcousticReport
         /// Optional — scoring works without geometry (modal subscore then

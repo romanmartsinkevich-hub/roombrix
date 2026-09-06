@@ -1,10 +1,14 @@
 import SwiftUI
+import SwiftData
 import RoombrixAcoustics
+import RoombrixScoring
 
 /// Milestone 1 measurement flow — the phone is the instrument, never the
 /// source: ambient → pink-noise level setting → sweep.
 struct MeasureView: View {
     @StateObject private var coordinator = MeasurementCoordinator()
+    @Environment(\.modelContext) private var modelContext
+    @State private var savedResultIDs: Set<UUID> = []
     @State private var packageURLs: (pink: URL, sweep: URL)?
     @State private var packageError: String?
     @State private var deviceCheckText: String?
@@ -52,6 +56,12 @@ struct MeasureView: View {
             }
             .navigationTitle("Measure")
             .task { preparePackage() }
+            .onChange(of: coordinator.result?.id) { _, _ in
+                guard let result = coordinator.result,
+                      !savedResultIDs.contains(result.id) else { return }
+                savedResultIDs.insert(result.id)
+                modelContext.insert(MeasurementRecord(from: result))
+            }
         }
     }
 
@@ -265,6 +275,20 @@ struct ResultView: View {
                     Button("Measure again", action: onRestart)
                 }
             }
+            Section("Room Score (provisional calibration)") {
+                VStack(spacing: 4) {
+                    Text("\(Int(result.score.range.lowerBound.rounded()))–\(Int(result.score.range.upperBound.rounded()))")
+                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("Full breakdown on the Score tab")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                if let problem = result.topProblemText {
+                    Text(problem).font(.footnote)
+                }
+            }
             Section("Decay per band") {
                 ForEach(result.report.bandDecays, id: \.centerFrequency) { band in
                     HStack {
@@ -340,19 +364,6 @@ struct ResultView: View {
         case .t20: return "T20"
         case .topt: return "Topt"
         case .unmeasurable: return "—"
-        }
-    }
-}
-
-struct ScoreView: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "Room Score arrives in Milestone 2",
-                systemImage: "gauge.with.needle",
-                description: Text("Measurements already collect everything the score needs.")
-            )
-            .navigationTitle("Room Score")
         }
     }
 }

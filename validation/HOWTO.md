@@ -108,6 +108,24 @@ reliable that low).
 
 The agent then commits a report per recording to `validation/reports/`.
 
+## Adding a campaign room (multi-room validation)
+
+One folder per room under `validation/rooms/` — no code changes needed:
+
+```
+validation/rooms/<date>-<room-name>/
+    <any name>.wav          ← two or more consecutive app captures (raw WAV
+                              exported from the results screen)
+    <anything>rt60<...>.txt ← the REW RT60 export for the same position
+                              (or reference.json with {"250": 1.041, ...})
+    notes.md                ← optional session notes
+```
+
+Every folder is automatically picked up by the acceptance tests and by
+`roombrix-validate campaign validation/rooms`, and judged in the standard
+format: each capture within ±15 % of the reference across 250 Hz–4 kHz,
+takes pairwise within 3 %, identical fit windows.
+
 ## Go/no-go gate (from the brief)
 
 RT60 within tolerance in **at least 3 rooms** → proceed. Two takes at the

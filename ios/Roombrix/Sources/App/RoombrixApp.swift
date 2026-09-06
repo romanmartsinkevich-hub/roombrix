@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 @main
 struct RoombrixApp: App {
@@ -6,6 +7,7 @@ struct RoombrixApp: App {
         WindowGroup {
             RootView()
         }
+        .modelContainer(for: MeasurementRecord.self)
     }
 }
 

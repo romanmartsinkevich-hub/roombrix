@@ -1,6 +1,8 @@
 import Foundation
 import RoombrixDSP
 import RoombrixAcoustics
+import RoombrixScoring
+import RoombrixDiagnosis
 import RoombrixValidation
 
 /// One completed measurement, formatted identically to the CLI so results
@@ -23,6 +25,10 @@ struct MeasurementResult: Identifiable {
     /// (never from the level-setting stage): plain-language "replay
     /// louder/quieter" guidance. Empty when the capture is fine.
     let qualityAdvice: [String]
+    /// Room Score (provisional v1 calibration — see ScoreEngine).
+    let score: RoomScore
+    /// The single most severe diagnosed problem (free tier shows this).
+    let topProblemText: String?
     /// The raw capture, saved as WAV into Documents for hand-back
     /// verification against the CLI.
     let recordingURL: URL?
@@ -75,6 +81,13 @@ struct MeasurementResult: Identifiable {
         }
         if let c80 = report.c80 {
             lines.append(String(format: "C80: %+.1f dB", c80))
+        }
+        lines.append(String(
+            format: "Room Score: %.0f–%.0f (engine v%@, provisional calibration)",
+            score.range.lowerBound, score.range.upperBound, score.engineVersion
+        ))
+        if let topProblemText {
+            lines.append("Top problem: \(topProblemText)")
         }
         lines.append("(Estimates from a consumer microphone, not lab measurements.)")
         return lines.joined(separator: "\n")
@@ -431,6 +444,14 @@ final class MeasurementCoordinator: ObservableObject {
         )
         let report = RoomAnalyzer.analyze(primary: ir, ambient: ambient)
 
+        // Score + top problem (Listening purpose, internal mic — the only
+        // v1 configuration; external-mic support arrives with the Pro tier).
+        let score = ScoreEngine.score(.init(
+            report: report, purpose: .listening, microphone: .internalMic
+        ))
+        let diagnosis = DiagnosisEngine.diagnose(.init(report: report, purpose: .listening))
+        let topProblemText = diagnosis.topProblem.map { "\($0.title): \($0.explanation)" }
+
         // POST-HOC capture-quality validation, derived from the sweep
         // itself. A badly performed level stage must produce plain-language
         // advice — never silently wrong numbers.
@@ -476,6 +497,8 @@ final class MeasurementCoordinator: ObservableObject {
             inputDescription: inputDescription,
             captureSetupReport: captureSetupReport,
             qualityAdvice: qualityAdvice,
+            score: score,
+            topProblemText: topProblemText,
             recordingURL: savedURL
         ))
     }
