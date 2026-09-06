@@ -1,0 +1,20 @@
+Roombrix measurement — 29 Aug 2026 at 19:29:13
+Input: Микрофон iPhone (MicrophoneBuiltIn) @ 48000 Hz
+Marker confidence: 38.1 dB; latency 19.356 s
+Pre-marker quiet: 41.1 dB
+SNR estimate: 48.5 dB
+WARNING: The sweep arrived 35 dB louder than the level you set with pink noise — the volume changed between stages. Consider redoing the measurement at the confirmed level.
+
+Band (Hz) |   EDT   |   T20   |   T30   | Range | Metric
+       63 | 1.760 s | 2.002 s | 2.534 s | 36 dB | t20
+      125 | 0.853 s | 1.222 s | 1.251 s | 36 dB | t20
+      250 | 0.522 s | 0.712 s | 0.936 s | 43 dB | t30
+      500 | 0.010 s | 0.516 s | 0.722 s | 57 dB | t30
+     1000 | 0.003 s | 0.272 s | 0.464 s | 64 dB | t30
+     2000 | 0.002 s | 0.002 s | 0.385 s | 70 dB | t30
+     4000 | 0.001 s | 0.001 s | 0.006 s | 76 dB | t30
+     8000 |    —    | 0.001 s | 0.001 s | 85 dB | t30
+Mid-band RT60: 0.593 s
+LF/mid decay ratio: 2.34
+C80: +9.0 dB
+(Estimates from a consumer microphone, not lab measurements.)

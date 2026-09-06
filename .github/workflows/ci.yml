@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  engine-tests:
+    name: Engine tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run RoombrixCore tests
+        working-directory: RoombrixCore
+        run: swift test
+
+  ios-build:
+    name: iOS build + engine tests via vDSP (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run engine tests on the Accelerate/vDSP FFT path
+        working-directory: RoombrixCore
+        run: swift test
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios/Roombrix
+        run: xcodegen generate
+      - name: Build for iOS Simulator (no signing)
+        working-directory: ios/Roombrix
+        run: >
+          xcodebuild
+          -project Roombrix.xcodeproj
+          -scheme Roombrix
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build
