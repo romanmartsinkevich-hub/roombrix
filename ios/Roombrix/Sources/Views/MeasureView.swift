@@ -6,7 +6,7 @@ import RoombrixScoring
 /// Milestone 1 measurement flow — the phone is the instrument, never the
 /// source: ambient → pink-noise level setting → sweep.
 struct MeasureView: View {
-    @StateObject private var coordinator = MeasurementCoordinator()
+    @EnvironmentObject private var coordinator: MeasurementCoordinator
     @Environment(\.modelContext) private var modelContext
     @State private var savedResultIDs: Set<UUID> = []
     @State private var packageURLs: (pink: URL, sweep: URL)?
@@ -364,19 +364,6 @@ struct ResultView: View {
         case .t20: return "T20"
         case .topt: return "Topt"
         case .unmeasurable: return "—"
-        }
-    }
-}
-
-struct PlanView: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "Treatment plan arrives in Milestone 3",
-                systemImage: "square.grid.3x3.topleft.filled",
-                description: Text("Works from manually entered room dimensions — no LiDAR required.")
-            )
-            .navigationTitle("Plan")
         }
     }
 }

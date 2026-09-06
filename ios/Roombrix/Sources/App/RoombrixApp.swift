@@ -7,11 +7,13 @@ struct RoombrixApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: MeasurementRecord.self)
+        .modelContainer(for: [MeasurementRecord.self, RoomRecord.self])
     }
 }
 
 struct RootView: View {
+    @StateObject private var coordinator = MeasurementCoordinator()
+
     var body: some View {
         TabView {
             MeasureView()
@@ -21,5 +23,6 @@ struct RootView: View {
             PlanView()
                 .tabItem { Label("Plan", systemImage: "square.grid.3x3.topleft.filled") }
         }
+        .environmentObject(coordinator)
     }
 }
