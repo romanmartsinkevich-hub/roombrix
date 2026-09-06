@@ -4,143 +4,82 @@ import Foundation
 @testable import RoombrixAcoustics
 @testable import RoombrixDSP
 
-/// MILESTONE 1 ACCEPTANCE, as executable tests on the real uploaded
-/// captures in validation/recordings/:
-/// - two consecutive captures agree within 3 % per band,
-/// - both land within 15 % of the REW reference across 250 Hz–4 kHz,
-/// - the pre-fix pathological capture (excessive level, 4 kHz once read
-///   0.006 s) recovers the room's decay,
-/// - the SNR estimate matches the independently measured peak-to-noise gap.
+/// MILESTONE 1 ACCEPTANCE as executable tests on real captures.
+///
+/// CAMPAIGN-DRIVEN: every room folder under `validation/rooms/` is tested
+/// automatically — adding a new campaign room (captures + REW export or
+/// reference.json) requires NO code changes. Criteria per room:
+/// - every capture within ±15 % of the reference across 250 Hz–4 kHz,
+/// - consecutive captures pairwise within 3 % per band,
+/// - identical fit windows per band across captures.
 final class EndToEndCaptureTests: XCTestCase {
 
-    // REW reference values for the acceptance room (2026-08-29 session).
-    static let rewReference: [Double: Double] = [
-        250: 1.041, 500: 0.763, 1_000: 0.685, 2_000: 0.603, 4_000: 0.526,
-    ]
-    static let criteriaBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
-
-    static var recordingsURL: URL {
+    static var validationURL: URL {
         // file → RoombrixValidationTests → Tests → RoombrixCore → repo root.
         URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // strip file name
-            .deletingLastPathComponent()   // RoombrixValidationTests
-            .deletingLastPathComponent()   // Tests
-            .deletingLastPathComponent()   // RoombrixCore
-            .appendingPathComponent("validation/recordings")
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("validation")
     }
 
-    struct PipelineResult {
-        let decays: [ReverbTime.BandDecay]
-        let snrDB: Double?
-        let report: AcousticReport
-    }
+    static var roomsURL: URL { validationURL.appendingPathComponent("rooms") }
+    static var recordingsURL: URL { validationURL.appendingPathComponent("recordings") }
 
-    /// Full pipeline exactly as `roombrix-validate measure` / the app run it.
-    static func run(file: String) throws -> PipelineResult {
-        let url = recordingsURL.appendingPathComponent(file)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw XCTSkip("fixture \(file) not present in validation/recordings")
-        }
-        let audio = try WAVFile.read(url: url)
-        let fs = audio.sampleRate
-        let sweep = SineSweep(parameters: .init(
-            startFrequency: 20, endFrequency: 20_000, duration: 10, sampleRate: fs
-        ))
-        let marker = TimingReference.makeMarker(sampleRate: fs)
-        let spacing = TimingReference.expectedMarkerSpacing(marker: marker, payloadCount: sweep.samples.count)
-        let guardSamples = Int(marker.guardInterval * fs)
-        let requiredTrailing = marker.samples.count + guardSamples + sweep.samples.count
+    // MARK: - Campaign acceptance (all rooms, no code changes per room)
 
-        guard let detection = TimingReference.detect(
-            marker: marker, in: audio.samples,
-            expectedMarkerSpacing: spacing,
-            requiredTrailingSamples: requiredTrailing
-        ), detection.confidenceDB >= TimingReference.minimumConfidenceDB else {
-            throw NSError(domain: "EndToEnd", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "marker not detected in \(file)",
-            ])
-        }
+    func testAllCampaignRoomsMeetAcceptance() throws {
+        let rooms = RoomCampaign.discoverRooms(in: Self.roomsURL)
+        XCTAssertFalse(rooms.isEmpty, "at least the acceptance room must be present")
 
-        let snr = NoiseFloor.peakToNoiseGapDB(
-            recording: audio.samples,
-            markerStartIndex: detection.markerStartIndex,
-            sampleRate: fs
-        )
-        let aligned = Array(audio.samples[min(detection.stimulusStartIndex, audio.samples.count - 1)...])
-        let deconvolved = Deconvolution.impulseResponse(from: aligned, sweep: sweep)
-        let ir = ImpulseResponse(
-            samples: deconvolved.impulseResponse,
-            sampleRate: deconvolved.sampleRate,
-            directIndex: deconvolved.peakIndex
-        )
-        let report = RoomAnalyzer.analyze(primary: ir)
-        return PipelineResult(decays: report.bandDecays, snrDB: snr, report: report)
-    }
-
-    func band(_ decays: [ReverbTime.BandDecay], _ center: Double) -> ReverbTime.BandDecay? {
-        decays.first { $0.centerFrequency == center }
-    }
-
-    // MARK: - Acceptance
-
-    func testConsecutiveCapturesMeetAcceptance() throws {
-        let take1 = try Self.run(file: "roombrix_capture_2026-08-29T18-48-12Z.wav")
-        let take2 = try Self.run(file: "roombrix_capture_2026-08-29T18-50-46Z.wav")
-
-        for center in Self.criteriaBands {
-            guard let band1 = band(take1.decays, center),
-                  let band2 = band(take2.decays, center),
-                  let rt1 = ReverbTime.bestEstimate(band1),
-                  let rt2 = ReverbTime.bestEstimate(band2)
-            else {
-                XCTFail("\(Int(center)) Hz must be measurable in both takes")
-                continue
-            }
-            let reference = Self.rewReference[center]!
-
-            // Within 15 % of the REW reference, both takes.
-            XCTAssertEqual(rt1, reference, accuracy: reference * 0.15,
-                           "take 1 @ \(Int(center)) Hz vs REW")
-            XCTAssertEqual(rt2, reference, accuracy: reference * 0.15,
-                           "take 2 @ \(Int(center)) Hz vs REW")
-
-            // Take-to-take within 3 %.
-            XCTAssertEqual(rt1, rt2, accuracy: rt2 * 0.03,
-                           "repeatability @ \(Int(center)) Hz: \(rt1) vs \(rt2)")
-
-            // Deterministic window selection: identical per band.
-            XCTAssertEqual(band1.windowStartDB, band2.windowStartDB,
-                           "window start must match across takes @ \(Int(center)) Hz")
-            XCTAssertEqual(band1.windowEndDB, band2.windowEndDB,
-                           "window end must match across takes @ \(Int(center)) Hz")
+        for roomURL in rooms {
+            let result = try RoomCampaign.analyze(roomURL: roomURL)
+            XCTAssertTrue(result.passedAccuracy,
+                          "\(result.name) accuracy FAILED:\n\(result.summaryText)")
+            XCTAssertTrue(result.passedRepeatability,
+                          "\(result.name) repeatability FAILED:\n\(result.summaryText)")
         }
     }
+
+    // MARK: - Special fixtures (not part of the room campaign)
 
     func testPathologicalLoudCaptureRecoversRoomDecay() throws {
         // Pre-fix, this capture's 4 kHz read 0.006 s (fit inside the direct
-        // pulse) and 8 kHz 0.001 s. The adaptive window must recover the
-        // room from the same data.
-        let result = try Self.run(file: "roombrix_capture_2026-08-29T17-29-12Z.wav")
-        for center in Self.criteriaBands {
-            guard let decay = band(result.decays, center),
+        // pulse). The adaptive window must recover the room from the same
+        // data. Room-1 reference, wider ±20 % tolerance (different session
+        // at a 12 dB higher playback level).
+        let url = Self.recordingsURL
+            .appendingPathComponent("roombrix_capture_2026-08-29T17-29-12Z.wav")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("pathological fixture not present")
+        }
+        let reference: [Double: Double] = [
+            250: 1.041, 500: 0.763, 1_000: 0.685, 2_000: 0.603, 4_000: 0.526,
+        ]
+        let result = try CapturePipeline.analyze(url: url)
+        for (band, ref) in reference {
+            guard let decay = result.decays.first(where: { $0.centerFrequency == band }),
                   let rt = ReverbTime.bestEstimate(decay)
             else {
-                XCTFail("\(Int(center)) Hz must be measurable")
+                XCTFail("\(Int(band)) Hz must be measurable")
                 continue
             }
-            XCTAssertGreaterThan(rt, 0.3, "never a millisecond cliff artifact @ \(Int(center)) Hz")
-            let reference = Self.rewReference[center]!
-            XCTAssertEqual(rt, reference, accuracy: reference * 0.20,
-                           "@ \(Int(center)) Hz (pathological capture, wider ±20 % tolerance)")
+            XCTAssertGreaterThan(rt, 0.3, "never a millisecond cliff artifact @ \(Int(band)) Hz")
+            XCTAssertEqual(rt, ref, accuracy: ref * 0.20, "@ \(Int(band)) Hz")
         }
     }
 
     func testSNRMatchesMeasuredPeakToNoiseGap() throws {
-        // Independently measured (item 1 of the 2026-08-29 review):
-        // peak −25.3 dBFS, noise −83.8 dBFS → gap 58.6 dB. The previous
-        // estimator reported 25.0 dB on this capture.
-        let take = try Self.run(file: "roombrix_capture_2026-08-29T18-50-46Z.wav")
-        guard let snr = take.snrDB else {
+        // Independently measured: peak −25.3 dBFS, noise −83.8 dBFS →
+        // gap 58.6 dB. The pre-fix estimator reported 25.0 dB on this file.
+        let url = Self.roomsURL
+            .appendingPathComponent("2026-08-29-room1-domestic/roombrix_capture_2026-08-29T18-50-46Z.wav")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("room-1 fixture not present")
+        }
+        let output = try CapturePipeline.analyze(url: url)
+        guard let snr = output.snrDB else {
             return XCTFail("SNR must be computable")
         }
         XCTAssertEqual(snr, 58.6, accuracy: 4.0,
@@ -148,18 +87,23 @@ final class EndToEndCaptureTests: XCTestCase {
     }
 
     func testEDTNeverReportsImpossibleValues() throws {
-        // Item 7: EDT 0.001–0.013 s was reported on all three captures.
-        for file in [
-            "roombrix_capture_2026-08-29T17-29-12Z.wav",
-            "roombrix_capture_2026-08-29T18-48-12Z.wav",
-            "roombrix_capture_2026-08-29T18-50-46Z.wav",
-        ] {
-            let result = try Self.run(file: file)
+        // Sub-20 ms EDT figures were reported on all three 2026-08-29
+        // captures before the sanity rule covered every metric.
+        var urls = [Self.recordingsURL
+            .appendingPathComponent("roombrix_capture_2026-08-29T17-29-12Z.wav")]
+        for room in RoomCampaign.discoverRooms(in: Self.roomsURL) {
+            let wavs = ((try? FileManager.default.contentsOfDirectory(
+                at: room, includingPropertiesForKeys: nil
+            )) ?? []).filter { $0.pathExtension.lowercased() == "wav" }
+            urls.append(contentsOf: wavs)
+        }
+        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+            let result = try CapturePipeline.analyze(url: url)
             for decay in result.decays {
                 if let edt = decay.edt {
                     XCTAssertGreaterThanOrEqual(
                         edt, ReverbTime.minimumPlausibleEDT,
-                        "\(file) @ \(Int(decay.centerFrequency)) Hz: impossible EDT"
+                        "\(url.lastPathComponent) @ \(Int(decay.centerFrequency)) Hz: impossible EDT"
                     )
                 }
             }

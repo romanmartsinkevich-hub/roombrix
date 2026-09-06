@@ -432,6 +432,30 @@ case "edc":
         print(String(format: "  %5.1f…%5.1f dB | %@", upper, lower, fmt(f)))
     }
 
+case "campaign":
+    guard args.count >= 2 else { fail("campaign: missing <rooms-dir> argument (e.g. validation/rooms)") }
+    let roomsURL = URL(fileURLWithPath: args[1], isDirectory: true)
+    let rooms = RoomCampaign.discoverRooms(in: roomsURL)
+    guard !rooms.isEmpty else { fail("no room folders found under \(roomsURL.path)") }
+    var allPassed = true
+    for roomURL in rooms {
+        do {
+            let result = try RoomCampaign.analyze(roomURL: roomURL)
+            print(result.summaryText)
+            print("")
+            if !result.passed { allPassed = false }
+        } catch {
+            print("=== \(roomURL.lastPathComponent) ===")
+            print("ERROR: \(error)")
+            print("")
+            allPassed = false
+        }
+    }
+    print(allPassed
+        ? "CAMPAIGN: PASS (all rooms meet ±15 % accuracy and ≤3 % repeatability)"
+        : "CAMPAIGN: FAIL (see rooms above)")
+    exit(allPassed ? 0 : 2)
+
 case "package":
     guard args.count >= 2 else { fail("package: missing <output-dir> argument") }
     let rate = flagValue("--rate", in: args).flatMap(Double.init) ?? 48_000
