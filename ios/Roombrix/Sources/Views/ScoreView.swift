@@ -14,6 +14,22 @@ struct ScoreView: View {
             if let latest = records.first {
                 List {
                     scoreCard(latest)
+                    if let baseline = records.first(where: { $0.isBaseline }),
+                       baseline.persistentModelID != latest.persistentModelID {
+                        Section("Before / After") {
+                            NavigationLink {
+                                BeforeAfterView(baseline: baseline, current: latest)
+                            } label: {
+                                HStack {
+                                    Label("Compare with baseline", systemImage: "arrow.left.arrow.right")
+                                    Spacer()
+                                    Text("\(Int((latest.scoreValue - baseline.scoreValue).rounded()) >= 0 ? "+" : "")\(Int((latest.scoreValue - baseline.scoreValue).rounded()))")
+                                        .monospacedDigit()
+                                        .foregroundStyle(latest.scoreValue >= baseline.scoreValue ? .green : .red)
+                                }
+                            }
+                        }
+                    }
                     if let problem = latest.topProblemText {
                         Section("Top problem") {
                             Text(problem)
@@ -25,6 +41,9 @@ struct ScoreView: View {
                                 SubscoreRow(subscore: subscore)
                             }
                         }
+                    }
+                    Section("Share") {
+                        ShareCardSection(card: ScoreCardView(record: latest), label: "Share score card")
                     }
                     Section {
                         Label(ScoreEngine.calibrationNote, systemImage: "exclamationmark.triangle")
@@ -117,9 +136,26 @@ struct SubscoreRow: View {
 
 struct RecordDetailView: View {
     let record: MeasurementRecord
+    @Query private var allRecords: [MeasurementRecord]
 
     var body: some View {
         List {
+            Section {
+                if record.isBaseline {
+                    Label("This is the baseline ('before') measurement", systemImage: "flag.fill")
+                        .foregroundStyle(.blue)
+                    Button("Remove baseline mark") { record.isBaseline = false }
+                } else {
+                    Button {
+                        for other in allRecords { other.isBaseline = false }
+                        record.isBaseline = true
+                    } label: {
+                        Label("Use as baseline ('before' state)", systemImage: "flag")
+                    }
+                }
+            } footer: {
+                Text("Mark the measurement taken BEFORE a change (treatment installed, speakers moved). New measurements are then compared against it on the Score tab.")
+            }
             Section("Room Score") {
                 LabeledContent(
                     "Score",

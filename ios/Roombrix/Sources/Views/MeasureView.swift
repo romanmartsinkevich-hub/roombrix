@@ -8,6 +8,7 @@ import RoombrixScoring
 struct MeasureView: View {
     @EnvironmentObject private var coordinator: MeasurementCoordinator
     @Environment(\.modelContext) private var modelContext
+    @Query private var allRecords: [MeasurementRecord]
     @State private var savedResultIDs: Set<UUID> = []
     @State private var packageURLs: (pink: URL, sweep: URL)?
     @State private var packageError: String?
@@ -96,6 +97,12 @@ struct MeasureView: View {
             Section("2 — Place the phone") {
                 Text("Put the phone at your listening position at ear height — on a stand or resting screen-up on a cushion. Do NOT hold it: your body absorbs sound and any movement corrupts the measurement.")
                     .font(.footnote)
+            }
+            if allRecords.contains(where: { $0.isBaseline }) {
+                Section("Re-measuring after a change?") {
+                    Text("For a valid before/after comparison, everything must match the baseline session except the change you made:\n• phone at the SAME position and height (your markers on the Plan tab show it)\n• SAME playback volume\n• same room state (doors, curtains)\nThe comparison appears automatically on the Score tab.")
+                        .font(.footnote)
+                }
             }
             Section("3 — Measure") {
                 Button {
