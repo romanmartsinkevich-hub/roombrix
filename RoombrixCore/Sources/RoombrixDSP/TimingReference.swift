@@ -42,13 +42,13 @@ public struct TimingReference: Sendable {
 
     /// Plausibility gate: a detection whose marker window is not at least
     /// this much louder than the preceding region should be rejected.
-    public static let minimumPreMarkerQuietDB = 6.0
+    public static let minimumPreMarkerQuietDB = Calibration.minimumPreMarkerQuietDB
     /// Plausibility gate: start/end marker spacing implying more drift than
     /// this is a detection failure, not a real clock offset.
-    public static let maximumPlausibleDriftPPM = 2_000.0
+    public static let maximumPlausibleDriftPPM = Calibration.maximumPlausibleDriftPPM
 
     /// Minimum confidence for a detection to be considered trustworthy.
-    public static let minimumConfidenceDB = 12.0
+    public static let minimumConfidenceDB = Calibration.minimumMarkerConfidenceDB
 
     /// Linear chirp marker, 1–8 kHz over 250 ms by default. That band survives
     /// small speakers, Bluetooth codecs, and phone-mic rolloff at both ends.

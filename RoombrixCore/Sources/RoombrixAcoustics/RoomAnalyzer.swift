@@ -33,9 +33,9 @@ public struct AcousticReport: Sendable {
     /// SNR/plateau estimators. The gate therefore fires only for genuinely
     /// pathological setups (mic at the speaker); routine level problems are
     /// caught by post-hoc range validation instead.
-    public static let excessivePerBandDirectToReverbDB = 45.0
+    public static let excessivePerBandDirectToReverbDB = Calibration.perBandDirectGateDB
     /// Legacy broadband threshold — informational only.
-    public static let excessiveDirectToReverbDB = 35.0
+    public static let excessiveDirectToReverbDB = Calibration.broadbandDirectGateDB
 
     /// True when any 1–4 kHz band exceeds the per-band threshold.
     public var hasExcessiveDirectLevel: Bool {
@@ -140,7 +140,7 @@ public enum RoomAnalyzer {
             guard center < fs / 2 else { return nil }
             let banded = OctaveBand.filtered(ir.samples, center: center, sampleRate: fs)
             let curve = SchroederIntegration.decayCurve(of: banded, sampleRate: fs)
-            let anchorIndex = min(ir.directIndex + Int(0.005 * fs), curve.levelsDB.count - 1)
+            let anchorIndex = min(ir.directIndex + Int(Calibration.cliffAnchorTimeSeconds * fs), curve.levelsDB.count - 1)
             guard anchorIndex >= 0, anchorIndex < curve.truncationIndex else { return nil }
             return (center, -curve.levelsDB[anchorIndex])
         }

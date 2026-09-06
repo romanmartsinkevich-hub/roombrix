@@ -1,4 +1,5 @@
 import Foundation
+import RoombrixDSP
 
 /// Schroeder backward integration: turns a (band-filtered) impulse response
 /// into an energy decay curve (EDC), the input to all RT estimates.
@@ -32,7 +33,7 @@ public enum SchroederIntegration {
     public static func decayCurve(
         of samples: [Double],
         sampleRate: Double,
-        noiseMarginDB: Double = 8
+        noiseMarginDB: Double = Calibration.noiseTruncationMarginDB
     ) -> DecayCurve {
         precondition(!samples.isEmpty)
         let squared = samples.map { $0 * $0 }
@@ -112,7 +113,7 @@ public enum SchroederIntegration {
             tailEnergy = squared[tailStartIndex...].reduce(0, +)
         }
         let plateauDB = 10 * log10(max(tailEnergy / totalEnergy, 1e-14))
-        let usableRangeDB = max(0, min(90, -plateauDB - 10))
+        let usableRangeDB = max(0, min(Calibration.usableRangeCapDB, -plateauDB - Calibration.plateauSafetyMarginDB))
 
         return DecayCurve(
             levelsDB: edc,

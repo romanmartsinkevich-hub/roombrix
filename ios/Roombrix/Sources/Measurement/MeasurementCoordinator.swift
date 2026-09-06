@@ -101,7 +101,7 @@ enum MeasurementConstants {
     /// worth roughly 15-20 dB over broadband pink noise. (The original
     /// 45 dB pink target drove playback ~12 dB too loud and broke the
     /// fixed fit window -- see the 2026-08-29 finding.)
-    static let targetSNRdB = 27.0
+    static let targetSNRdB = Calibration.pinkNoiseTargetSNRdB
     static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
     static let maxSweepRecordingSeconds = 180.0
 }

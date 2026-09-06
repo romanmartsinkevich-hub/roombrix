@@ -166,9 +166,9 @@ public enum ReverbTime {
         // anchor sitting exactly on a grid boundary can flip a band's window
         // between takes; anchors are energy ratios stable to well under the
         // 2.5 dB half-cell, so this is rare.)
-        var start = min(-5.0, 5.0 * (((anchorDB ?? -5) + 3) / 5.0).rounded())
-        if start - 15 < endLimitDB {
-            start = min(-5.0, endLimitDB + 15)
+        var start = min(-5.0, Calibration.fitWindowGridDB * (((anchorDB ?? -5) + Calibration.cliffAnchorOffsetDB) / Calibration.fitWindowGridDB).rounded())
+        if start - Calibration.minimumSpanDB < endLimitDB {
+            start = min(-5.0, endLimitDB + Calibration.minimumSpanDB)
         }
 
         // End: preferred span 25 dB (30 from a clean top), bounded by the
@@ -179,12 +179,13 @@ public enum ReverbTime {
         // (large direct cliffs, e.g. 4/8 kHz at high playback level) keep
         // their full span — for them the deep region is all there is, and
         // empirically it is stable when the start is jitter-free.
-        let preferredSpan: Double = start >= -5.0 ? 30 : 25
+        let preferredSpan: Double = start >= -5.0 ? Calibration.cleanTopSpanDB : Calibration.preferredSpanDB
         var end = max(start - preferredSpan, endLimitDB)
-        if end < -43.0, start - (-43.0) >= 18 {
-            end = -43.0
+        if end < Calibration.fitWindowEndFloorDB,
+           start - Calibration.fitWindowEndFloorDB >= Calibration.endFloorMinimumSpanDB {
+            end = Calibration.fitWindowEndFloorDB
         }
-        if start - end >= 15, let candidate = fit(curve: curve, from: start, to: end) {
+        if start - end >= Calibration.minimumSpanDB, let candidate = fit(curve: curve, from: start, to: end) {
             return (candidate.rt60, candidate.rSquared, start, end)
         }
         // Fallback for tight or truncated curves: shorter spans.
@@ -216,7 +217,7 @@ public enum ReverbTime {
             // point sample, deliberately: averaging across 3–8 ms spans the
             // cliff knee and amplifies take-to-take shape differences; the
             // grid quantization in adaptiveFit absorbs point-sample jitter.)
-            let anchorIndex = min(ir.directIndex + Int(0.005 * ir.sampleRate), curve.levelsDB.count - 1)
+            let anchorIndex = min(ir.directIndex + Int(Calibration.cliffAnchorTimeSeconds * ir.sampleRate), curve.levelsDB.count - 1)
             let anchorDB = anchorIndex >= 0 && anchorIndex < curve.truncationIndex
                 ? curve.levelsDB[anchorIndex] : nil
             let adaptive = adaptiveFit(curve: curve, anchorDB: anchorDB)
@@ -253,7 +254,7 @@ public enum ReverbTime {
 
     /// Hard sanity limit: an EDT below this while the room clearly decays
     /// slower is, by definition, a misplaced fit on the direct pulse.
-    public static let minimumPlausibleEDT = 0.02
+    public static let minimumPlausibleEDT = Calibration.minimumPlausibleDecaySeconds
 
     /// Single RT60 figure per band. The adaptive-window fit is authoritative
     /// (gated by its own r²). Without an adaptive fit, legacy T30/T20
@@ -264,7 +265,7 @@ public enum ReverbTime {
     /// - Curvature: T20/T30 ratio outside 0.5…2 means no single slope exists.
     public static func bestEstimate(
         _ band: BandDecay,
-        minimumFitQuality: Double = 0.8
+        minimumFitQuality: Double = Calibration.minimumFitQuality
     ) -> Double? {
         // Authoritative path: the adaptive window.
         if let adaptive = band.adaptiveRT, adaptive > 0 {
@@ -285,7 +286,7 @@ public enum ReverbTime {
         }
         if let t20 = band.t20, let t30 = band.t30, t20 > 0 {
             let curvature = t30 / t20
-            if curvature > 2 || curvature < 0.5 { return nil }
+            if !Calibration.curvatureRatioBounds.contains(curvature) { return nil }
         }
         switch band.selectedMetric {
         case .t30:
