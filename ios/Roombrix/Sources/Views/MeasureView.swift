@@ -154,6 +154,9 @@ struct MeasureView: View {
                 Button("Redo background measurement") {
                     Task { await coordinator.startAmbient() }
                 }
+                Button("Skip level setting (I know my volume is right)") {
+                    coordinator.skipLevelSetting()
+                }
             } footer: {
                 Text("Next: start the pink-noise file on your system, on loop. You'll see a live level readout here.")
             }
@@ -253,20 +256,13 @@ struct ResultView: View {
 
     var body: some View {
         List {
-            if let warning = result.levelChangeWarning {
-                Section {
-                    Label(warning, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-            }
-            if let ratio = result.report.directToReverberantDB,
-               ratio > AcousticReport.excessiveDirectToReverbDB {
-                Section {
-                    Label(
-                        String(format: "Playback level was too high: the direct sound is %.0f dB above the room's reverberant field (healthy is 20–30 dB). The analysis compensated, but re-measuring at a noticeably lower volume will give tighter results.", ratio),
-                        systemImage: "speaker.wave.3.fill"
-                    )
-                    .foregroundStyle(.orange)
+            if !result.qualityAdvice.isEmpty {
+                Section("Capture quality") {
+                    ForEach(result.qualityAdvice, id: \.self) { advice in
+                        Label(advice, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                    Button("Measure again", action: onRestart)
                 }
             }
             Section("Decay per band") {

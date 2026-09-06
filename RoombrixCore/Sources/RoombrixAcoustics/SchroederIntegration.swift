@@ -77,11 +77,16 @@ public enum SchroederIntegration {
             i += block
         }
 
-        // Backward integration up to the truncation point.
+        // Backward integration up to the truncation point, with noise
+        // COMPENSATION (Lundeby): the mean noise power is subtracted from
+        // each squared sample first. Uncompensated integration leaves an
+        // upward bow in the EDC that (a) stretches deep-window fits long and
+        // (b) varies with the take-to-take noise realization — the dominant
+        // repeatability error on real captures.
         var edc = [Double](repeating: -120, count: squared.count)
         var running = 0.0
         for j in stride(from: truncationIndex - 1, through: 0, by: -1) {
-            running += squared[j]
+            running += max(squared[j] - noisePower, 0)
             edc[j] = running
         }
         let reference = edc[0]
@@ -90,17 +95,24 @@ public enum SchroederIntegration {
         }
 
         // Usable range: −(untruncated-EDC noise plateau) − 10 dB safety.
-        // The plateau is computed analytically (noise power × samples past
-        // the truncation point) so it does not depend on how much noisy tail
-        // happens to be in the recording.
-        let remainingNoiseEnergy = noisePower * Double(squared.count - truncationIndex)
-        let usableRangeDB: Double
-        if remainingNoiseEnergy > 0 {
-            let plateauDB = 10 * log10(max(remainingNoiseEnergy / totalEnergy, 1e-14))
-            usableRangeDB = max(0, min(90, -plateauDB - 10))
+        // The plateau is EMPIRICAL: the actual energy in the tail past the
+        // truncation point over the total. The earlier analytic estimate
+        // (idealized noise power × samples) under-reported real-world tail
+        // energy — deconvolution artifacts, sweep-rate noise spread — by
+        // tens of dB, which let the fit-window search descend below the
+        // real flattening level and stretch RT long (observed: "34 dB
+        // usable range" reported while a −35…−65 dB window was selected).
+        let tailEnergy: Double
+        if truncationIndex < squared.count {
+            tailEnergy = squared[truncationIndex...].reduce(0, +)
         } else {
-            usableRangeDB = 90
+            // No noise crossing inside the window: bound the range by the
+            // energy in the final 5 % of the curve.
+            let tailStartIndex = squared.count - max(1, squared.count / 20)
+            tailEnergy = squared[tailStartIndex...].reduce(0, +)
         }
+        let plateauDB = 10 * log10(max(tailEnergy / totalEnergy, 1e-14))
+        let usableRangeDB = max(0, min(90, -plateauDB - 10))
 
         return DecayCurve(
             levelsDB: edc,

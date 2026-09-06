@@ -14,14 +14,36 @@ public struct AcousticReport: Sendable {
     public var smoothnessDeviationDB: Double
     public var lowFrequencyPeaks: [(frequency: Double, prominenceDB: Double)]
     public var noiseFloor: NoiseFloor.Estimate?
-    /// Direct-sound peak vs early reverberant field (RMS 2–10 ms after the
-    /// peak), dB. Calibration from real captures: ~21 dB at a correct
-    /// playback level, ~60 dB when the level was excessive. Above
-    /// `AcousticReport.excessiveDirectToReverbDB` the capture level should
-    /// be flagged rather than silently mis-fit.
+    /// Broadband direct-sound peak vs early reverberant field (RMS 2–10 ms
+    /// after the peak), dB. INFORMATIONAL ONLY — dominated by LF where D/R
+    /// is naturally low (real captures read 3.6–26.5 dB broadband regardless
+    /// of capture quality, so a broadband gate can never fire). Gating
+    /// happens per band.
     public var directToReverberantDB: Double?
+    /// Per-octave-band D/R, the actual capture-quality gate. Calibration
+    /// from real 4 kHz data: ~26 dB on the healthy reference capture vs
+    /// ~60 dB on the excessive-playback capture that broke the band.
+    public var directToReverberantByBand: [(band: Double, ratioDB: Double)]
 
+    /// Threshold for the per-band gate (1–4 kHz; 8 kHz is naturally deep on
+    /// phone captures at the listening position). Calibrated on real data:
+    /// healthy captures read ~34 dB at 4 kHz, the "excessive-level" capture
+    /// ~37 dB — only 3 dB apart, because in a linear chain D/R barely moves
+    /// with level; the original 60 dB figure was an artifact of the broken
+    /// SNR/plateau estimators. The gate therefore fires only for genuinely
+    /// pathological setups (mic at the speaker); routine level problems are
+    /// caught by post-hoc range validation instead.
+    public static let excessivePerBandDirectToReverbDB = 45.0
+    /// Legacy broadband threshold — informational only.
     public static let excessiveDirectToReverbDB = 35.0
+
+    /// True when any 1–4 kHz band exceeds the per-band threshold.
+    public var hasExcessiveDirectLevel: Bool {
+        directToReverberantByBand.contains {
+            (1_000...4_000).contains($0.band)
+                && $0.ratioDB > Self.excessivePerBandDirectToReverbDB
+        }
+    }
 
     public init(
         bandDecays: [ReverbTime.BandDecay],
@@ -35,7 +57,8 @@ public struct AcousticReport: Sendable {
         smoothnessDeviationDB: Double,
         lowFrequencyPeaks: [(frequency: Double, prominenceDB: Double)],
         noiseFloor: NoiseFloor.Estimate?,
-        directToReverberantDB: Double? = nil
+        directToReverberantDB: Double? = nil,
+        directToReverberantByBand: [(band: Double, ratioDB: Double)] = []
     ) {
         self.bandDecays = bandDecays
         self.midBandRT60 = midBandRT60
@@ -49,6 +72,7 @@ public struct AcousticReport: Sendable {
         self.lowFrequencyPeaks = lowFrequencyPeaks
         self.noiseFloor = noiseFloor
         self.directToReverberantDB = directToReverberantDB
+        self.directToReverberantByBand = directToReverberantByBand
     }
 }
 
@@ -96,12 +120,35 @@ public enum RoomAnalyzer {
             smoothnessDeviationDB: FrequencyResponse.smoothnessDeviation(of: averaged),
             lowFrequencyPeaks: FrequencyResponse.lowFrequencyPeaks(in: averaged),
             noiseFloor: ambient.flatMap(NoiseFloor.estimate),
-            directToReverberantDB: directToReverberantDB(primary)
+            directToReverberantDB: directToReverberantDB(primary),
+            directToReverberantByBand: directToReverberantByBand(primary)
         )
     }
 
-    /// Direct-sound peak vs early reverberant field: peak level minus the
-    /// RMS level of the 2–10 ms window after the peak.
+    /// Per-band direct-energy dominance: −(EDC level 5 ms after the direct
+    /// arrival) of the band-filtered response — how many dB of the band's
+    /// total energy the direct pulse consumed. This is the quantity that
+    /// actually predicts a broken fixed-window fit (the fit window falls
+    /// inside the direct pulse). Broadband D/R is dominated by LF and can
+    /// never flag an HF-only problem.
+    public static func directToReverberantByBand(
+        _ ir: ImpulseResponse,
+        bands: [Double] = [500, 1_000, 2_000, 4_000, 8_000]
+    ) -> [(band: Double, ratioDB: Double)] {
+        let fs = ir.sampleRate
+        return bands.compactMap { center in
+            guard center < fs / 2 else { return nil }
+            let banded = OctaveBand.filtered(ir.samples, center: center, sampleRate: fs)
+            let curve = SchroederIntegration.decayCurve(of: banded, sampleRate: fs)
+            let anchorIndex = min(ir.directIndex + Int(0.005 * fs), curve.levelsDB.count - 1)
+            guard anchorIndex >= 0, anchorIndex < curve.truncationIndex else { return nil }
+            return (center, -curve.levelsDB[anchorIndex])
+        }
+    }
+
+    /// Broadband direct-sound level vs early reverberant field: peak level
+    /// minus the RMS level of the 2–10 ms window after the peak.
+    /// Informational — see `directToReverberantByBand` for the gate.
     public static func directToReverberantDB(_ ir: ImpulseResponse) -> Double? {
         let fs = ir.sampleRate
         let start = ir.directIndex + Int(0.002 * fs)

@@ -147,20 +147,28 @@ manual L×W×H entry both reduce to `RoomGeometry`.
   −20…−30 % and produced a physically impossible 8 kHz > 4 kHz decay). The
   iOS capture path reads channel 0 only; the CLI states which channel it
   used.
-- **Adaptive fit windows (Topt-equivalent), never fixed offsets:** the fit
-  window is searched per band (candidate starts −5…−50 dB, spans 30/25/20 dB,
-  most linear window wins, larger spans and near-top starts preferred), and
-  the chosen window is reported with every result. Justified twice on real
-  data: a −43 dB noise plateau biased fixed-window T30 +19 % while T20 read
-  +3 %; and a 12 dB-too-loud playback raised the direct-to-reverberant ratio
-  to 60 dB, putting the entire −5…−35 dB window inside the direct pulse
-  (4 kHz "T30" = 0.064 s) while refitting the same curve at −25…−55 dB
-  recovered the room's true 0.49 s. Usable range is reverberant-referenced
-  (from the linear region's top, never peak-above-noise). Labels: near-top
-  start with ≥ 30 dB span → T30, ≥ 20 dB → T20, lowered start → Topt,
-  nothing fittable → unmeasurable. Sub-20 ms "decays" are refused outright
-  (misplaced-fit signature), and a direct-to-reverberant ratio above 35 dB
-  triggers a too-loud-playback warning (healthy captures: ~20–30 dB).
+- **Anchored adaptive fit windows, never fixed offsets and never searched:**
+  the per-band window start is derived from a physical feature — the EDC
+  level 5 ms after the direct arrival (the cliff depth), plus 3 dB,
+  quantized to a 5 dB grid — with span 25 dB (30 from a clean top), an end
+  floor at −43 dB (deep-tail data proved take-dependent above it; bands
+  whose usable data only begins deeper keep their span), and a hard end
+  limit 10 dB above the EMPIRICAL noise plateau (actual tail energy, not an
+  idealized noise model — the analytic estimate under-reported real tails
+  by tens of dB and let fits stretch long). Fixed windows silently measure
+  the direct pulse at high direct-to-reverberant ratios (4 kHz once read
+  0.006 s); r²-searched windows are non-deterministic on bowed curves
+  (consecutive takes diverged 7–44 %). The anchored-grid policy passes the
+  Milestone 1 acceptance on real captures: take-to-take ≤ 2.5 % per band
+  with identical windows, and within ±10.5 % of the REW reference across
+  250 Hz–4 kHz — enforced by `EndToEndCaptureTests` on committed fixtures.
+  The chosen window is reported with every result. Labels: −5 dB start with
+  ≥ 30 dB span → T30, ≥ 20 dB → T20, lowered start → Topt, nothing fittable
+  → unmeasurable. Sub-20 ms figures are refused for every decay metric
+  (EDT included). The headline SNR is the peak-to-noise gap (recording peak
+  vs quiet window before the marker). The pink-noise level stage is purely
+  advisory UI: no value from it feeds any metric; capture quality is
+  validated post hoc from the sweep itself with plain-language redo advice.
 - **Mic calibration:** correction curves (built-in per-device or user-loaded
   UMIK-style files) apply to frequency-response metrics ONLY, never to decay
   or clarity (relative time-domain metrics). Enforced structurally: the decay

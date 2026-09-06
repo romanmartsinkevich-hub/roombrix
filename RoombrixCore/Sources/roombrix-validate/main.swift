@@ -219,21 +219,16 @@ case "measure":
         }
     }
 
-    // --- SNR estimate ---------------------------------------------------------
-    let ambientEnd = max(0, detection.markerStartIndex - Int(0.05 * fs))
-    if ambientEnd > Int(0.3 * fs) {
-        let ambient = Array(recording[..<ambientEnd])
-        let sweepStart = min(detection.stimulusStartIndex, recording.count - 1)
-        let sweepEnd = min(sweepStart + sweep.samples.count, recording.count)
-        let sweepRegion = Array(recording[sweepStart..<sweepEnd])
-        if let snr = NoiseFloor.signalToNoiseDB(signal: sweepRegion, ambient: ambient) {
-            print(String(format: "SNR estimate (sweep vs pre-marker ambient): %.1f dB", snr))
-            if snr < 40 {
-                print("WARNING: SNR below 40 dB — T30 in quiet bands may be unreliable. Consider a louder sweep or a quieter room.")
-            }
+    // --- SNR: peak-to-noise gap ------------------------------------------------
+    if let gap = NoiseFloor.peakToNoiseGapDB(
+        recording: recording, markerStartIndex: detection.markerStartIndex, sampleRate: fs
+    ) {
+        print(String(format: "SNR (peak-to-noise gap): %.1f dB", gap))
+        if gap < 40 {
+            print("WARNING: peak-to-noise gap below 40 dB — decay range will be limited. Consider a louder sweep or a quieter room.")
         }
     } else {
-        print("SNR estimate: skipped (less than 0.3 s of ambient before the marker — start recording earlier next time)")
+        print("SNR estimate: skipped (not enough quiet lead-in before the marker)")
     }
 
     // --- Deconvolution + analysis ----------------------------------------------
@@ -246,14 +241,20 @@ case "measure":
     )
     let decays = ReverbTime.analyze(ir)
 
-    if let directRatio = RoomAnalyzer.directToReverberantDB(ir) {
-        print(String(format: "Direct-to-reverberant ratio: %.1f dB", directRatio))
-        if directRatio > AcousticReport.excessiveDirectToReverbDB {
+    let perBandDR = RoomAnalyzer.directToReverberantByBand(ir)
+    if !perBandDR.isEmpty {
+        let formatted = perBandDR
+            .map { String(format: "%.0f Hz: %.0f dB", $0.band, $0.ratioDB) }
+            .joined(separator: ", ")
+        print("Direct-to-reverberant per band: \(formatted)")
+        let excessive = perBandDR.filter {
+            $0.band >= 1_000 && $0.ratioDB > AcousticReport.excessivePerBandDirectToReverbDB
+        }
+        if !excessive.isEmpty {
             print("""
-            WARNING: the direct sound towers \(String(format: "%.0f", directRatio)) dB over the reverberant field
-            (healthy captures sit around 20–30 dB). This is the excessive-playback-level
-            signature: decay windows are placed adaptively to compensate, but re-measuring
-            at a lower volume will give more decay range and tighter results.
+            WARNING: excessive direct-to-reverberant ratio in \(excessive.map { "\(Int($0.band)) Hz" }.joined(separator: ", ")) \
+            (healthy ≈ 20–30 dB per band). Excessive-playback-level signature — the adaptive
+            windows compensate, but re-measuring at a lower volume gives tighter results.
             """)
         }
     }
@@ -403,13 +404,32 @@ case "edc":
     // sit on a bent (cliff- or noise-contaminated) EDC changes the answer;
     // this table shows by how much.
     let curve = SchroederIntegration.decayCurve(of: filtered, sampleRate: ir.sampleRate)
+    let anchorIndex = min(ir.directIndex + Int(0.005 * ir.sampleRate), curve.levelsDB.count - 1)
+    print("")
+    print(String(format: "EDC at direct+5 ms (cliff depth anchor): %.1f dB", curve.levelsDB[anchorIndex]))
+    print(String(format: "Usable range: %.0f dB (end limit %.0f dB)", curve.usableRangeDB, -curve.usableRangeDB))
     print("")
     print("Fit-window sensitivity (margin 8 dB):")
     print("  Window        | RT60 (r²)")
     print("  --------------|----------------")
-    for (upper, lower) in [(-5.0, -25.0), (-5.0, -35.0), (-10.0, -30.0), (-10.0, -40.0), (-15.0, -45.0), (-20.0, -50.0)] {
+    for upper in stride(from: -5.0, through: -30.0, by: -5.0) {
+        for span in [20.0, 25.0, 30.0] {
+            let lower = upper - span
+            let f = ReverbTime.fit(curve: curve, from: upper, to: lower)
+            print(String(format: "  %4.0f…%4.0f dB | %@", upper, lower, fmt(f)))
+        }
+    }
+
+    // Grid-window candidates (exact, for window-policy calibration).
+    print("")
+    print("Grid candidates:")
+    for (upper, lower) in [
+        (-10.0, -35.0), (-10.0, -43.0), (-15.0, -40.0), (-15.0, -43.0),
+        (-20.0, -43.0), (-25.0, -43.0), (-25.0, -50.0),
+        (-30.0, -55.0), (-35.0, -60.0), (-45.0, -70.0),
+    ] {
         let f = ReverbTime.fit(curve: curve, from: upper, to: lower)
-        print(String(format: "  %4.0f…%4.0f dB | %@", upper, lower, fmt(f)))
+        print(String(format: "  %5.1f…%5.1f dB | %@", upper, lower, fmt(f)))
     }
 
 case "package":

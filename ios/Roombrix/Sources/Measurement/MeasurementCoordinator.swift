@@ -19,9 +19,10 @@ struct MeasurementResult: Identifiable {
     /// Input pinning details (port, data source, polar pattern, mode) from
     /// capture setup — quirks-table material.
     let captureSetupReport: String
-    /// Set when the sweep arrived at a clearly different level than the
-    /// pink-noise pass — the user changed the volume between stages.
-    let levelChangeWarning: String?
+    /// Post-hoc capture-quality advice derived from the sweep itself
+    /// (never from the level-setting stage): plain-language "replay
+    /// louder/quieter" guidance. Empty when the capture is fine.
+    let qualityAdvice: [String]
     /// The raw capture, saved as WAV into Documents for hand-back
     /// verification against the CLI.
     let recordingURL: URL?
@@ -41,13 +42,13 @@ struct MeasurementResult: Identifiable {
             lines.append(String(format: "Pre-marker quiet: %.1f dB", quiet))
         }
         if let snr = snrDB {
-            lines.append(String(format: "SNR estimate: %.1f dB", snr))
+            lines.append(String(format: "SNR (peak-to-noise gap): %.1f dB", snr))
         }
         if let drift = clockDriftPPM {
             lines.append(String(format: "Clock drift: %+.0f ppm", drift))
         }
-        if let warning = levelChangeWarning {
-            lines.append("WARNING: \(warning)")
+        for advice in qualityAdvice {
+            lines.append("ADVICE: \(advice)")
         }
         lines.append("")
         lines.append("Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric")
@@ -154,15 +155,10 @@ final class MeasurementCoordinator: ObservableObject {
     @Published private(set) var ambientWarning: String?
     @Published private(set) var liveSNR: [BandSNR] = []
     @Published private(set) var trafficLight: TrafficLight = .tooQuiet
-    /// Broadband level of the pink noise measured while it was PLAYING
-    /// (continuously updated during level setting). Captured this way
-    /// because the user stops the noise before tapping continue.
-    private var lastActivePinkLevelDB: Double?
 
     private let engine = AudioMeasurementEngine()
     private var ambientBuffer: [Double] = []
     private var ambientBandsByFrequency: [Double: Double] = [:]
-    private var pinkLevelDB: Double?
     private var meteringTask: Task<Void, Never>?
     private var sweepWatchTask: Task<Void, Never>?
 
@@ -244,12 +240,6 @@ final class MeasurementCoordinator: ObservableObject {
             worst = min(worst, snr)
         }
         liveSNR = snrs
-        // Track the pink level only while the noise is actually playing.
-        let broadband = Self.broadbandLevelDB(recent)
-        let ambientBroadband = Self.broadbandLevelDB(ambientBuffer)
-        if broadband > ambientBroadband + 15 {
-            lastActivePinkLevelDB = broadband
-        }
         if clippedCount > 5 {
             trafficLight = .clipping
         } else if worst >= MeasurementConstants.targetSNRdB {
@@ -259,12 +249,21 @@ final class MeasurementCoordinator: ObservableObject {
         }
     }
 
-    /// User confirms the volume is set (ideally on green). Captures the
-    /// pink-noise level as the expectation for the sweep pass.
+    /// User confirms the volume is set (ideally on green). The pink stage
+    /// is PURELY ADVISORY: nothing from it feeds any computed metric —
+    /// capture quality is validated post hoc from the sweep itself.
     func confirmLevel() {
         meteringTask?.cancel()
-        pinkLevelDB = lastActivePinkLevelDB
         _ = engine.stopCapture() // level-setting audio is discarded
+        startSweepRecording()
+    }
+
+    /// Experienced users may skip the level-setting stage entirely.
+    func skipLevelSetting() {
+        meteringTask?.cancel()
+        if phase == .levelSetting {
+            _ = engine.stopCapture()
+        }
         startSweepRecording()
     }
 
@@ -327,12 +326,11 @@ final class MeasurementCoordinator: ObservableObject {
         let inputDescription = engine.inputDescription
         let setupReport = engine.setupReport
         let ambient = ambientBuffer
-        let pinkLevel = pinkLevelDB
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let outcome = Self.process(
                 recording: recording, ambient: ambient,
-                pinkLevelDB: pinkLevel, sampleRate: fs,
+                sampleRate: fs,
                 inputDescription: inputDescription,
                 captureSetupReport: setupReport
             )
@@ -377,7 +375,6 @@ final class MeasurementCoordinator: ObservableObject {
     nonisolated static func process(
         recording: [Double],
         ambient: [Double],
-        pinkLevelDB: Double?,
         sampleRate fs: Double,
         inputDescription: String,
         captureSetupReport: String = ""
@@ -417,31 +414,12 @@ final class MeasurementCoordinator: ObservableObject {
             return .failure(MeasurementFailure("Playback timing was inconsistent (possible dropout or stutter). Measure again; if it repeats, try a different playback source."))
         }
 
-        // SNR from the dedicated ambient stage.
+        // SNR: peak-to-noise gap (quiet window ending 0.3 s before the
+        // marker) — matches how reference tools characterize a capture.
         let sweepStart = min(detection.stimulusStartIndex, recording.count - 1)
-        let sweepEnd = min(sweepStart + sweep.samples.count, recording.count)
-        let sweepRegion = Array(recording[sweepStart..<sweepEnd])
-        let snr = NoiseFloor.signalToNoiseDB(signal: sweepRegion, ambient: ambient)
-
-        // Level continuity vs the pink-noise pass. Both files are peak
-        // -6 dBFS; the sweep's payload RMS sits ~9 dB above pink RMS, so
-        // expected sweep level = pink level + digital offset of the files.
-        var levelChangeWarning: String?
-        if let pinkLevelDB {
-            let sweepFileRMS = 10 * log10(
-                sweep.samples.reduce(0) { $0 + $1 * $1 } / Double(sweep.samples.count)
-            ) - 6 // payload is unit-peak; file is scaled to −6 dBFS peak
-            let pinkFileRMS = -6.0 - StimulusPackage.pinkCrestFactorDB
-            let expectedOffset = sweepFileRMS - pinkFileRMS
-            let measuredSweep = broadbandLevelDB(sweepRegion)
-            let deviation = (measuredSweep - pinkLevelDB) - expectedOffset
-            if abs(deviation) > 10 {
-                levelChangeWarning = String(
-                    format: "The sweep arrived %.0f dB %@ than the level you set with pink noise — the volume changed between stages. Consider redoing the measurement at the confirmed level.",
-                    abs(deviation), deviation > 0 ? "louder" : "quieter"
-                )
-            }
-        }
+        let snr = NoiseFloor.peakToNoiseGapDB(
+            recording: recording, markerStartIndex: detection.markerStartIndex, sampleRate: fs
+        )
 
         // Deconvolution + metrics.
         let aligned = Array(recording[sweepStart...])
@@ -452,6 +430,25 @@ final class MeasurementCoordinator: ObservableObject {
             directIndex: deconvolved.peakIndex
         )
         let report = RoomAnalyzer.analyze(primary: ir, ambient: ambient)
+
+        // POST-HOC capture-quality validation, derived from the sweep
+        // itself. A badly performed level stage must produce plain-language
+        // advice — never silently wrong numbers.
+        var qualityAdvice: [String] = []
+        let criteriaBands = report.bandDecays.filter {
+            (250...4_000).contains($0.centerFrequency)
+        }
+        let unmeasurable = criteriaBands.filter { $0.selectedMetric == .unmeasurable }
+        if !unmeasurable.isEmpty {
+            let names = unmeasurable.map { "\(Int($0.centerFrequency)) Hz" }.joined(separator: ", ")
+            qualityAdvice.append("Playback was too quiet for full accuracy — \(names) could not be measured reliably. Please replay the sweep at a higher volume and measure again.")
+        }
+        if report.hasExcessiveDirectLevel {
+            qualityAdvice.append("Playback was louder than necessary: the direct sound dominates the high-frequency decay. Results were fitted adaptively, but re-measuring at a noticeably lower volume will be tighter.")
+        }
+        if let snr, snr < 40 {
+            qualityAdvice.append(String(format: "Peak-to-noise gap was %.0f dB (target 40+). A louder sweep or quieter room improves bass reliability.", snr))
+        }
 
         // Save the raw capture for CLI cross-verification.
         var savedURL: URL?
@@ -478,7 +475,7 @@ final class MeasurementCoordinator: ObservableObject {
             sampleRate: fs,
             inputDescription: inputDescription,
             captureSetupReport: captureSetupReport,
-            levelChangeWarning: levelChangeWarning,
+            qualityAdvice: qualityAdvice,
             recordingURL: savedURL
         ))
     }

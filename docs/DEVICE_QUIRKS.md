@@ -22,7 +22,7 @@ this automatically — paste its report into the row):
 
 | Model | iOS ver. tested | Actual sample rate | AGC off confirmed | LF roll-off (−3 dB) | Correction curve id | Notes |
 |---|---|---|---|---|---|---|
-| **iPhone 15 Plus (MU183ZD/A)** | pending | pending | pending — run in-app device check | — | — | Primary validation device (owner's). Fill from the app's device-check report. |
+| **iPhone 15 Plus (MU183ZD/A)** | 26 (2026-08-29) | 48 000 Hz (as preferred) | `.measurement` accepted; AGC drift check pending re-run | — | — | Primary validation device. Input pinned: MicrophoneBuiltIn, data source "Снизу"/Bottom (1 of 3), polar pattern omnidirectional requested AND granted. Input gain ~12.8 dB below a Shure Motiv reference at identical SPL, but noise floor ~19 dB lower → net usable dynamic range BETTER (58.6 vs 52.4 dB). Do not compensate gain. Validated end-to-end vs REW: 250 Hz–4 kHz within ±10.5 %, repeatability ≤ 2.5 %. |
 | iPhone 12 | — | — | — | — | `ip12-v0` (placeholder) | Minimum supported device; performance budget baseline |
 | iPhone 12 mini | — | — | — | — | — | |
 | iPhone 13 | — | — | — | — | — | |

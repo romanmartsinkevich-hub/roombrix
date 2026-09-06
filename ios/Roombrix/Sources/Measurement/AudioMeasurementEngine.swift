@@ -116,6 +116,15 @@ final class AudioMeasurementEngine {
             reportLines.append("Polar pattern requested: \(requestedPattern); granted: \(grantedPattern)")
             reportLines.append("Sample rate: \(Int(session.sampleRate)) Hz (preferred 48000)")
             reportLines.append("Mode .measurement accepted: \(session.mode == .measurement)")
+            // Input gain characterization (informational — we never change
+            // it: relative decay metrics are gain-independent, and the
+            // observed ~12.8 dB lower gain vs a Motiv reference came with a
+            // 19 dB lower noise floor, i.e. MORE usable dynamic range).
+            reportLines.append(String(
+                format: "Input gain: %.2f (settable: %@)",
+                session.inputGain,
+                session.isInputGainSettable ? "yes" : "no"
+            ))
             setupReport = reportLines.joined(separator: "\n")
 
             return sampleRate

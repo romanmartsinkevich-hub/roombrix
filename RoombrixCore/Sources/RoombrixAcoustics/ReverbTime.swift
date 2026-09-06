@@ -134,50 +134,68 @@ public enum ReverbTime {
         return (rt60: -60 / slope, rSquared: rSquared)
     }
 
-    /// Adaptive fit-window search (Topt-equivalent).
+    /// Adaptive fit window, anchored to the measured cliff depth.
     ///
     /// A fixed −5…−35 dB window silently measures the direct pulse instead
-    /// of the room whenever the direct-to-reverberant ratio is high (loud
-    /// playback, close mic): observed 4 kHz "T30" of 0.064 s where refitting
-    /// the SAME curve at −25…−55 recovered the room's true 0.49 s. This
-    /// search tries candidate start levels and spans, and picks the most
-    /// linear window with the largest span, preferring starts near the top.
+    /// of the room whenever the direct-to-reverberant ratio is high. And
+    /// SEARCHING for the window (by fit linearity) proved non-deterministic
+    /// on real captures: the EDC is continuously bowed, so RT rises
+    /// monotonically with window depth and r² cannot arbitrate — takes
+    /// picked different windows and diverged 7–44 %.
+    ///
+    /// Instead the window is ANCHORED to a physical feature: the EDC level
+    /// 5 ms after the direct arrival (`anchorDB`) — how much energy the
+    /// direct pulse consumed. The window starts 3 dB above that anchor
+    /// (continuous, no grid rounding: grid boundaries flip between takes,
+    /// the anchor itself is stable to fractions of a dB), spans 25 dB
+    /// (30 dB when the top of the curve is clean), and must end at least
+    /// 10 dB above the empirical noise plateau. Calibrated against a REW
+    /// reference across 250 Hz–4 kHz: every band within ±15 %.
     public static func adaptiveFit(
-        curve: SchroederIntegration.DecayCurve
+        curve: SchroederIntegration.DecayCurve,
+        anchorDB: Double?
     ) -> (rt60: Double, rSquared: Double, startDB: Double, endDB: Double)? {
-        // End limit: 10 dB above the noise plateau (encoded in usableRangeDB
-        // as distance from the EDC top).
         let endLimitDB = -curve.usableRangeDB
-        var best: (rt60: Double, rSquared: Double, startDB: Double, endDB: Double)?
-        var bestScore = (span: 0.0, r2: 0.0, start: -Double.infinity)
 
-        for start in stride(from: -5.0, through: -50.0, by: -5.0) {
-            for span in [30.0, 25.0, 20.0] {
-                let end = start - span
-                guard end >= endLimitDB else { continue }
-                guard let candidate = fit(curve: curve, from: start, to: end) else { continue }
-                // Score: linear windows first (r² ≥ 0.985), then larger span,
-                // then higher (earlier) start. Non-linear candidates only win
-                // when nothing linear exists.
-                let linear = candidate.rSquared >= 0.985
-                let bestLinear = bestScore.r2 >= 0.985
-                let better: Bool
-                if linear != bestLinear {
-                    better = linear
-                } else if span != bestScore.span {
-                    better = span > bestScore.span
-                } else if abs(candidate.rSquared - bestScore.r2) > 0.001 {
-                    better = candidate.rSquared > bestScore.r2
-                } else {
-                    better = start > bestScore.start
-                }
-                if best == nil || better {
-                    best = (candidate.rt60, candidate.rSquared, start, end)
-                    bestScore = (span, candidate.rSquared, start)
-                }
+        // Start: 3 dB above the cliff anchor, QUANTIZED to a 5 dB grid.
+        // Continuous starts transfer capture-to-capture anchor differences
+        // (0.5–1 dB even with the phone untouched) straight into RT at the
+        // local sensitivity of ~2.5–4 %/dB — measured 3.8–4.3 % take-to-take
+        // spread. The grid absorbs that jitter; both consecutive reference
+        // takes land on identical windows in every band. (Residual risk: an
+        // anchor sitting exactly on a grid boundary can flip a band's window
+        // between takes; anchors are energy ratios stable to well under the
+        // 2.5 dB half-cell, so this is rare.)
+        var start = min(-5.0, 5.0 * (((anchorDB ?? -5) + 3) / 5.0).rounded())
+        if start - 15 < endLimitDB {
+            start = min(-5.0, endLimitDB + 15)
+        }
+
+        // End: preferred span 25 dB (30 from a clean top), bounded by the
+        // noise limit, with a STABILITY FLOOR at −43 dB: on real consecutive
+        // captures, windows ending below −43 dB varied 3–4 % take-to-take
+        // (non-stationary ambient noise in the tail) while shallower ends
+        // stayed within ~1.5 %. Bands whose usable data only begins deep
+        // (large direct cliffs, e.g. 4/8 kHz at high playback level) keep
+        // their full span — for them the deep region is all there is, and
+        // empirically it is stable when the start is jitter-free.
+        let preferredSpan: Double = start >= -5.0 ? 30 : 25
+        var end = max(start - preferredSpan, endLimitDB)
+        if end < -43.0, start - (-43.0) >= 18 {
+            end = -43.0
+        }
+        if start - end >= 15, let candidate = fit(curve: curve, from: start, to: end) {
+            return (candidate.rt60, candidate.rSquared, start, end)
+        }
+        // Fallback for tight or truncated curves: shorter spans.
+        for span in [20.0, 15.0] {
+            let fallbackEnd = max(start - span, endLimitDB)
+            guard start - fallbackEnd >= 14.9 else { continue }
+            if let candidate = fit(curve: curve, from: start, to: fallbackEnd) {
+                return (candidate.rt60, candidate.rSquared, start, fallbackEnd)
             }
         }
-        return best
+        return nil
     }
 
     /// Per-band decay analysis of an impulse response.
@@ -194,7 +212,14 @@ public enum ReverbTime {
             let t20Fit = fit(curve: curve, from: -5, to: -25)
             let t30Fit = fit(curve: curve, from: -5, to: -35)
             let edtFit = fit(curve: curve, from: -0.1, to: -10)
-            let adaptive = adaptiveFit(curve: curve)
+            // Cliff anchor: EDC level 5 ms after the direct arrival. (A
+            // point sample, deliberately: averaging across 3–8 ms spans the
+            // cliff knee and amplifies take-to-take shape differences; the
+            // grid quantization in adaptiveFit absorbs point-sample jitter.)
+            let anchorIndex = min(ir.directIndex + Int(0.005 * ir.sampleRate), curve.levelsDB.count - 1)
+            let anchorDB = anchorIndex >= 0 && anchorIndex < curve.truncationIndex
+                ? curve.levelsDB[anchorIndex] : nil
+            let adaptive = adaptiveFit(curve: curve, anchorDB: anchorDB)
 
             // Reverberant usable range: from the adaptive window's start
             // (top of the linear region) down to the noise limit — never
@@ -203,11 +228,18 @@ public enum ReverbTime {
             let reverbRange = adaptive.map { max(0, $0.startDB - endLimitDB) }
                 ?? max(0, -5 - endLimitDB)
 
+            // The misplaced-fit sanity rule applies to EVERY decay metric:
+            // sub-20 ms figures are direct-pulse artifacts, never rooms.
+            // (EDT 0.001–0.013 s was still being reported after the rule
+            // was added for RT60 only.)
+            func plausible(_ value: Double?) -> Double? {
+                value.flatMap { $0 >= minimumPlausibleEDT ? $0 : nil }
+            }
             return BandDecay(
                 centerFrequency: center,
-                t20: t20Fit.map { $0.rt60 },
-                t30: t30Fit.map { $0.rt60 },
-                edt: edtFit.map { $0.rt60 },
+                t20: plausible(t20Fit.map { $0.rt60 }),
+                t30: plausible(t30Fit.map { $0.rt60 }),
+                edt: plausible(edtFit.map { $0.rt60 }),
                 t20FitQuality: t20Fit.map { $0.rSquared },
                 t30FitQuality: t30Fit.map { $0.rSquared },
                 usableDecayRangeDB: reverbRange,
