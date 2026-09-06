@@ -32,7 +32,8 @@ struct BeforeAfterView: View {
                         .foregroundStyle(scoreDelta >= 0 ? .green : .red)
                     Text("Same engine version required for a meaningful delta: \(baseline.scoreEngineVersion) → \(current.scoreEngineVersion)")
                         .font(.caption2)
-                        .foregroundStyle(baseline.scoreEngineVersion == current.scoreEngineVersion ? .tertiary : .orange)
+                        .foregroundStyle(baseline.scoreEngineVersion == current.scoreEngineVersion
+                            ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.orange))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
