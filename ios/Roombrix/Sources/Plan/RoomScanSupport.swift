@@ -77,6 +77,9 @@ private struct RoomCaptureRepresentable: UIViewRepresentable {
         uiView.captureSession.stop()
     }
 
+    // Stable ObjC name: RoomCaptureViewDelegate refines NSCoding, and Swift
+    // rejects nested classes with unstable archive names for NSCoding.
+    @objc(RoombrixRoomScanCoordinator)
     final class Coordinator: NSObject, RoomCaptureViewDelegate {
         let onDimensions: (Double, Double, Double) -> Void
 
