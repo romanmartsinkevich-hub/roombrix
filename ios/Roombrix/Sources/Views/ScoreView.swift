@@ -116,8 +116,14 @@ struct SubscoreRow: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            Gauge(value: subscore.value, in: 0...100) { EmptyView() }
-                .tint(gaugeColor)
+            if subscore.isMeasured {
+                Gauge(value: subscore.value, in: 0...100) { EmptyView() }
+                    .tint(gaugeColor)
+            } else {
+                Text("not measured")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
             Text(subscore.explanation)
                 .font(.footnote)
                 .foregroundStyle(.secondary)

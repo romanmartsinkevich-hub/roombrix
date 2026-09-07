@@ -29,8 +29,15 @@ struct ScoreCardView: View {
                             Text(subscore.kind.displayName)
                                 .font(.caption)
                                 .frame(width: 130, alignment: .leading)
-                            Gauge(value: subscore.value, in: 0...100) { EmptyView() }
-                                .tint(subscore.value >= 70 ? .green : subscore.value >= 40 ? .orange : .red)
+                            if subscore.isMeasured {
+                                Gauge(value: subscore.value, in: 0...100) { EmptyView() }
+                                    .tint(subscore.value >= 70 ? .green : subscore.value >= 40 ? .orange : .red)
+                            } else {
+                                Text("not measured")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             Text(subscore.isMeasured ? "\(Int(subscore.value.rounded()))" : "—")
                                 .font(.caption.monospacedDigit())
                                 .frame(width: 26, alignment: .trailing)

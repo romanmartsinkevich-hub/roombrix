@@ -26,17 +26,24 @@ public enum ScoreEngine {
         public var geometry: RoomGeometry?
         public var purpose: RoomPurpose
         public var microphone: MicrophoneProfile
+        /// How many microphone positions the frequency response was averaged
+        /// over. The FR smoothness subscore is only MEASURED with ≥ 2
+        /// positions (the brief defines it as spatially averaged; a single
+        /// point conflates room response with one position's comb pattern).
+        public var measurementPositionCount: Int
 
         public init(
             report: AcousticReport,
             geometry: RoomGeometry? = nil,
             purpose: RoomPurpose = .listening,
-            microphone: MicrophoneProfile = .internalMic
+            microphone: MicrophoneProfile = .internalMic,
+            measurementPositionCount: Int = 1
         ) {
             self.report = report
             self.geometry = geometry
             self.purpose = purpose
             self.microphone = microphone
+            self.measurementPositionCount = measurementPositionCount
         }
     }
 
@@ -49,9 +56,17 @@ public enum ScoreEngine {
             claritySubscore(input),
             noiseSubscore(input),
         ]
-        var composite = 0.0
-        for s in subscores {
-            composite += s.value * s.kind.weight
+        // Composite over MEASURED subscores only, weights renormalized.
+        // An unmeasured subscore must not act as a zero: with the FR
+        // subscore unmeasured (single position), counting it dragged every
+        // score down by up to 20 points.
+        let measured = subscores.filter { $0.isMeasured }
+        let totalWeight = measured.reduce(0) { $0 + $1.kind.weight }
+        let composite: Double
+        if totalWeight > 0 {
+            composite = measured.reduce(0) { $0 + $1.value * $1.kind.weight } / totalWeight
+        } else {
+            composite = 0
         }
         return RoomScore(
             value: composite,
@@ -154,6 +169,14 @@ public enum ScoreEngine {
     // MARK: - Frequency-response smoothness (20 %)
 
     static func smoothnessSubscore(_ input: Input) -> Subscore {
+        guard input.measurementPositionCount >= 2 else {
+            return Subscore(
+                kind: .frequencySmoothness,
+                value: 0,
+                explanation: "Not measured: judging tonal balance needs the multi-point measurement (several positions around your seat) — a single point mixes the room with one spot's quirks.",
+                isMeasured: false
+            )
+        }
         let deviation = input.report.smoothnessDeviationDB
         // ≤ 2 dB weighted deviation is excellent; ≥ 8 dB is severe.
         let value = 100 * max(0, min(1, (8 - deviation) / 6))
