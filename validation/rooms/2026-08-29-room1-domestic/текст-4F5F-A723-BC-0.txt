@@ -1,0 +1,28 @@
+Roombrix measurement — 7 Sep 2026 at 17:56:07
+Input: Микрофон iPhone (MicrophoneBuiltIn) @ 48000 Hz
+Input port: Микрофон iPhone (MicrophoneBuiltIn)
+Data source: Снизу (of 3)
+Polar pattern requested: omnidirectional; granted: Omnidirectional
+Sample rate: 48000 Hz (preferred 48000)
+Mode .measurement accepted: true
+Input gain: 1.00 (settable: no)
+Direct-to-reverberant: 7.5 dB
+Marker confidence: 27.6 dB; latency 4.972 s
+Pre-marker quiet: 43.2 dB
+SNR (peak-to-noise gap): 61.3 dB
+
+Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric
+       63 | 0.378 s | 0.275 s | 18 dB | -5…-23 | t20
+      125 | 0.351 s | 0.369 s | 24 dB | -5…-29 | t20
+      250 | 0.370 s | 0.727 s | 32 dB | -5…-35 | t30
+      500 | 0.487 s | 0.630 s | 34 dB | -5…-35 | t30
+     1000 | 0.560 s | 0.631 s | 37 dB | -5…-35 | t30
+     2000 | 0.560 s | 0.673 s | 40 dB | -5…-35 | t30
+     4000 | 0.534 s | 0.617 s | 40 dB | -5…-35 | t30
+     8000 |    —    | 0.539 s | 43 dB | -10…-35 | t20
+Mid-band RT60: 0.631 s
+LF/mid decay ratio: 0.72
+C80: +16.0 dB
+Room Score: 64–70 (engine v1.0.0, provisional calibration)
+Top problem: Flutter echo: A rapid repeating echo bounces between a pair of parallel reflective surfaces (about 1.0 m apart). Clap your hands and you'll hear a metallic ringing.
+(Estimates from a consumer microphone, not lab measurements.)
