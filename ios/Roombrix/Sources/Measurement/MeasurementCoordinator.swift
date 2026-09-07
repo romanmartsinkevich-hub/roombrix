@@ -4,6 +4,9 @@ import RoombrixAcoustics
 import RoombrixScoring
 import RoombrixDiagnosis
 import RoombrixValidation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// One completed measurement, formatted identically to the CLI so results
 /// are directly comparable against the REW reference workflow.
@@ -183,8 +186,10 @@ final class MeasurementCoordinator: ObservableObject {
         phase = .preparing
         result = nil
         ambientWarning = nil
+        setKeepAwake(true)
 
         guard await AudioMeasurementEngine.requestPermission() else {
+            setKeepAwake(false)
             phase = .failed(AudioMeasurementEngine.EngineError.permissionDenied.localizedDescription)
             return
         }
@@ -192,6 +197,7 @@ final class MeasurementCoordinator: ObservableObject {
             _ = try engine.configureSession()
             try engine.startCapture()
         } catch {
+            setKeepAwake(false)
             phase = .failed(error.localizedDescription)
             return
         }
@@ -349,6 +355,7 @@ final class MeasurementCoordinator: ObservableObject {
             )
             await MainActor.run {
                 guard let self else { return }
+                self.setKeepAwake(false)
                 switch outcome {
                 case .success(let result):
                     self.result = result
@@ -364,7 +371,19 @@ final class MeasurementCoordinator: ObservableObject {
         meteringTask?.cancel()
         sweepWatchTask?.cancel()
         _ = engine.stopCapture()
+        setKeepAwake(false)
         phase = .idle
+    }
+
+    /// The screen must not lock mid-capture: waking the phone is a tap
+    /// transient straight into the microphone. Recording also continues if
+    /// the lock button is pressed deliberately (background audio mode), but
+    /// the tap to unlock afterwards would still contaminate the tail —
+    /// hence keep-awake for the whole sequence.
+    private func setKeepAwake(_ on: Bool) {
+        #if canImport(UIKit)
+        UIApplication.shared.isIdleTimerDisabled = on
+        #endif
     }
     #endif
 

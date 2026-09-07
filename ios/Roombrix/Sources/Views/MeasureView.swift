@@ -95,7 +95,7 @@ struct MeasureView: View {
                 }
             }
             Section("2 — Place the phone") {
-                Text("Put the phone at your listening position at ear height — on a stand or resting screen-up on a cushion. Do NOT hold it: your body absorbs sound and any movement corrupts the measurement.")
+                Text("Put the phone at your listening position at ear height — on a stand or resting screen-up on a cushion. Do NOT hold it: your body absorbs sound and any movement corrupts the measurement. The screen stays awake by itself during the measurement — don't touch the phone until it finishes (even pressing the lock button adds a click to the recording).")
                     .font(.footnote)
             }
             if allRecords.contains(where: { $0.isBaseline }) {
