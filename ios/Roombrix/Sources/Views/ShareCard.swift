@@ -40,7 +40,9 @@ struct ScoreCardView: View {
                             }
                             Text(subscore.isMeasured ? "\(Int(subscore.value.rounded()))" : "—")
                                 .font(.caption.monospacedDigit())
-                                .frame(width: 26, alignment: .trailing)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .frame(width: 34, alignment: .trailing)
                         }
                     }
                 }
