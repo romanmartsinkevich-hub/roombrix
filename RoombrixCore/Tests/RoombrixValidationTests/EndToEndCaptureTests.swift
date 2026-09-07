@@ -92,9 +92,13 @@ final class EndToEndCaptureTests: XCTestCase {
         var urls = [Self.recordingsURL
             .appendingPathComponent("roombrix_capture_2026-08-29T17-29-12Z.wav")]
         for room in RoomCampaign.discoverRooms(in: Self.roomsURL) {
+            // Captures only — room folders also hold REW impulse WAVs etc.
             let wavs = ((try? FileManager.default.contentsOfDirectory(
                 at: room, includingPropertiesForKeys: nil
-            )) ?? []).filter { $0.pathExtension.lowercased() == "wav" }
+            )) ?? []).filter {
+                $0.pathExtension.lowercased() == "wav"
+                    && $0.lastPathComponent.lowercased().hasPrefix("roombrix_capture")
+            }
             urls.append(contentsOf: wavs)
         }
         for url in urls where FileManager.default.fileExists(atPath: url.path) {

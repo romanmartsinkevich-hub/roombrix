@@ -162,10 +162,15 @@ public enum DiagnosisEngine {
                 measuredPeakFrequencies: peaks.map { $0.frequency }
             )
             if let first = matches.first {
+                // Name the matched mode explicitly (type + predicted
+                // frequency + axes): the plan view lists axial modes only,
+                // and an unlabeled tangential match reads as a contradiction.
                 modeMatchText = String(
-                    format: " The %.0f Hz peak matches a standing wave along your room's %@.",
+                    format: " The %.0f Hz peak matches a predicted %@ mode at %.1f Hz (along %@).",
                     first.measuredFrequency,
-                    first.mode.drivingAxes.joined(separator: " and ")
+                    first.mode.type.rawValue,
+                    first.mode.frequency,
+                    first.mode.drivingAxes.joined(separator: " + ")
                 )
             }
         }
