@@ -86,6 +86,44 @@ final class EndToEndCaptureTests: XCTestCase {
                        "estimated SNR must land within a few dB of the measured gap")
     }
 
+    func testFitWindowsNeverExtendBelowTheNoiseLimit() throws {
+        // M1 rule (item 4 of the 2026-08-29 review): the window END must
+        // never fall below (noise plateau + safety margin). Since
+        // usableDecayRangeDB = windowStart − endLimit, the invariant is
+        // equivalently: window span ≤ usable range, in EVERY band of EVERY
+        // fixture. (A window may legally consume the entire range — end
+        // exactly AT the limit — as room 1's 8 kHz band does with its
+        // −55…−73 dB window over an 18 dB range.)
+        for url in Self.allCaptureURLs() {
+            let result = try CapturePipeline.analyze(url: url)
+            for decay in result.decays {
+                guard let start = decay.windowStartDB,
+                      let end = decay.windowEndDB,
+                      let usable = decay.usableDecayRangeDB
+                else { continue }
+                XCTAssertLessThanOrEqual(
+                    start - end, usable + 0.01,
+                    "\(url.lastPathComponent) @ \(Int(decay.centerFrequency)) Hz: window \(start)…\(end) exceeds usable range \(usable)"
+                )
+            }
+        }
+    }
+
+    static func allCaptureURLs() -> [URL] {
+        var urls = [recordingsURL
+            .appendingPathComponent("roombrix_capture_2026-08-29T17-29-12Z.wav")]
+        for room in RoomCampaign.discoverRooms(in: roomsURL) {
+            let wavs = ((try? FileManager.default.contentsOfDirectory(
+                at: room, includingPropertiesForKeys: nil
+            )) ?? []).filter {
+                $0.pathExtension.lowercased() == "wav"
+                    && $0.lastPathComponent.lowercased().hasPrefix("roombrix_capture")
+            }
+            urls.append(contentsOf: wavs)
+        }
+        return urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     func testEDTNeverReportsImpossibleValues() throws {
         // Sub-20 ms EDT figures were reported on all three 2026-08-29
         // captures before the sanity rule covered every metric.
