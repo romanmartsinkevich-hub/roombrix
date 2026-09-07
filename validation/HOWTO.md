@@ -114,12 +114,21 @@ One folder per room under `validation/rooms/` — no code changes needed:
 
 ```
 validation/rooms/<date>-<room-name>/
-    <any name>.wav          ← two or more consecutive app captures (raw WAV
-                              exported from the results screen)
-    <anything>rt60<...>.txt ← the REW RT60 export for the same position
-                              (or reference.json with {"250": 1.041, ...})
+    roombrix_capture_*.wav  ← two or more consecutive app captures (raw WAV
+                              exported from the results screen; keep the
+                              app's file names — only files starting with
+                              "roombrix_capture" are treated as captures)
+    <anything>rt60<...>.txt ← REW RT60 export(s) for the same position;
+                              multiple takes are AVERAGED into the reference
+                              (or use reference.json with {"250": 1.041, ...})
     notes.md                ← optional session notes
+    anything else           ← ignored by the harness (REW impulse WAVs,
+                              frequency-response exports, app reports are
+                              all fine to include for context)
 ```
+
+One folder per room — don't add a new session's files into an existing
+room's folder unless it really is the same room and position.
 
 Every folder is automatically picked up by the acceptance tests and by
 `roombrix-validate campaign validation/rooms`, and judged in the standard

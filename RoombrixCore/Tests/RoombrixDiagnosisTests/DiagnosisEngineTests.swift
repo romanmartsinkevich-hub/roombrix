@@ -69,8 +69,10 @@ final class DiagnosisEngineTests: XCTestCase {
         ))
         let problem = diagnosis.problems.first { $0.kind == .bassDecayImbalance }
         XCTAssertNotNil(problem)
-        XCTAssertTrue(problem!.explanation.contains("standing wave"),
-                      "34 Hz peak matches the predicted length mode of a 5 m room")
+        XCTAssertTrue(problem!.explanation.contains("matches a predicted axial mode"),
+                      "34 Hz peak matches the predicted length mode of a 5 m room, named with its type")
+        XCTAssertTrue(problem!.explanation.contains("along length"),
+                      "matched mode must name its axes explicitly")
 
         let bassRecs = diagnosis.recommendations.filter { $0.problem == .bassDecayImbalance }
         XCTAssertEqual(bassRecs.count, 2)

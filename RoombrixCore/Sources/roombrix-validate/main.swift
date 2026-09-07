@@ -452,7 +452,7 @@ case "campaign":
         }
     }
     print(allPassed
-        ? "CAMPAIGN: PASS (all rooms meet ±15 % accuracy and ≤3 % repeatability)"
+        ? "CAMPAIGN: PASS (all rooms meet ±15 % accuracy and the band-dependent repeatability gates)"
         : "CAMPAIGN: FAIL (see rooms above)")
     exit(allPassed ? 0 : 2)
 

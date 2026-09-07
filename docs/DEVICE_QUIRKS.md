@@ -44,6 +44,17 @@ this automatically — paste its report into the row):
 - Multiple built-in mics: verify which one the default route selects and pin
   it (bottom mic preferred; avoid the noise-cancelling-processed routes).
 
+## Open observation: LF readings vs phone orientation (room 2, 2026-09-07)
+
+Room 2 (phone on a tripod, VERTICAL, screen facing the system, bottom mic
+pointing down): 250 Hz–4 kHz within ±9 % of the OmniMic reference, but the
+125 Hz octave read 35–40 % SHORT while REW's own third-octave values there
+scattered 0.51–0.74 s between takes. Possible interaction of vertical
+orientation / bottom-port mic facing the tripod with low-frequency pickup.
+Informational bands only — but worth a controlled orientation test
+(same room, same position, phone horizontal vs vertical) before trusting
+sub-250 Hz data on tripod-mounted captures.
+
 ## Internal-mic correction curves
 
 Generic per-model correction curves (labeled "estimated" in the UI) ship as
