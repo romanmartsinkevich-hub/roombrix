@@ -138,6 +138,34 @@ final class DiagnosisEngineTests: XCTestCase {
         XCTAssertTrue(rec!.placement.description.contains("ONE side"))
     }
 
+    func testFlutterLocalPairGetsLocalisationGuidance() {
+        // Real case (room 2, clap-verified): 1.0 m flutter in a
+        // 4.2 × 3.75 × 2.6 m room — matches no room dimension, so the card
+        // must say so, name furniture-scale culprits, and give the
+        // walk-and-clap localisation procedure.
+        let geometry = RoomGeometry(length: 4.2, width: 3.75, height: 2.6)
+        let diagnosis = DiagnosisEngine.diagnose(.init(
+            report: makeReport(
+                rt60: 0.6,
+                flutter: .init(period: 0.00583, surfaceSpacing: 1.0, strength: 0.4)
+            ),
+            geometry: geometry
+        ))
+        let problem = diagnosis.problems.first { $0.kind == .flutterEcho }
+        XCTAssertNotNil(problem)
+        XCTAssertTrue(problem!.explanation.contains("matches NONE of your room's dimensions"))
+        XCTAssertTrue(problem!.explanation.contains("speaker cabinet"),
+                      "furniture-scale culprits must be listed")
+        XCTAssertTrue(problem!.explanation.contains("clapping once every step"),
+                      "walk-and-clap localisation procedure must be included")
+
+        let rec = diagnosis.recommendations.first { $0.problem == .flutterEcho }
+        XCTAssertNotNil(rec)
+        XCTAssertNil(rec!.treatment, "no purchase until the pair is localised")
+        XCTAssertEqual(rec!.costTier, .free)
+        XCTAssertTrue(rec!.placement.surfaces.isEmpty)
+    }
+
     func testOverdampedRoomGetsDiffusionNotAbsorption() {
         let diagnosis = DiagnosisEngine.diagnose(.init(
             report: makeReport(rt60: 0.15), geometry: geometry

@@ -65,6 +65,20 @@ swift run roombrix-validate rt60 room-ir.wav --rew rew-rt60-export.txt
 tables. Add `.mdat`-derived exports per room to a `validation-data/` folder
 (git-LFS if large) as the real-room campaign runs.
 
+## Flutter detector: real-room ground truth (enforced as fixtures)
+
+The flutter detector has BOTH polarity confirmations from the campaign,
+enforced by `testFlutterDetectorGroundTruth` on the committed captures:
+
+- **TRUE POSITIVE — room 2 (2026-09-07):** "flutter, surfaces ~1.0 m
+  apart" flagged as the top problem; clap-verified by two listeners
+  (clear metallic ringing neither had consciously noticed before). The
+  spacing matches no room dimension → furniture-scale parallel pair.
+- **TRUE NEGATIVE — room 1 (2026-08-29):** no audible flutter in the
+  room; the detector stays silent on both captures.
+
+Any threshold change to `FlutterEcho.detect` must keep both verdicts.
+
 ## Real-room campaign protocol (Sprint 0 gate)
 
 For each of ≥ 10 rooms (varied size/furnishing):
