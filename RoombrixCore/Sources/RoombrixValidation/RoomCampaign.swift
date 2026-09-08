@@ -52,6 +52,12 @@ public enum RoomCampaign {
         /// to hide an uninvestigated failure — the JSON entry must state
         /// the root cause and the pending experiment.
         public let knownIssue: String?
+        /// Per variant group: (group name, mean RT60 of the group's measured
+        /// captures). Empty when the room has no variant groups.
+        public let groupMeans: [(name: String, mean: Double?)]
+        /// Relative delta between the extreme group means (the experiment's
+        /// between-conditions result). Informational, never gated.
+        public let betweenGroupDelta: Double?
     }
 
     public struct RoomResult {
@@ -66,6 +72,10 @@ public enum RoomCampaign {
         /// orientation pair), not repeated takes of one setup: spreads are
         /// between-conditions differences, reported but not gated.
         public let repeatabilityExemption: String?
+        /// Variant-group composition ("tripod: a.wav, b.wav"), when grouped.
+        public let groupDescriptions: [String]
+        /// Grouping problems (captures matching no group / several groups).
+        public let groupWarnings: [String]
         public var passed: Bool { passedAccuracy && passedRepeatability }
 
         public var summaryText: String {
@@ -73,6 +83,12 @@ public enum RoomCampaign {
             lines.append("=== \(name) (\(captureNames.count) captures) ===")
             for warning in referenceWarnings {
                 lines.append("⚠︎ reference: \(warning)")
+            }
+            for description in groupDescriptions {
+                lines.append("variant group \(description)")
+            }
+            for warning in groupWarnings {
+                lines.append("⚠︎ grouping: \(warning)")
             }
             lines.append("Band (Hz) | " + captureNames.map { _ in "RT60   " }.joined(separator: " | ")
                 + " | Reference | Worst err | Spread | Windows")
@@ -90,6 +106,16 @@ public enum RoomCampaign {
                     row.knownIssue != nil ? "  ⚠︎ KNOWN ISSUE (excluded from gate)" : ""
                 ))
             }
+            if rows.contains(where: { $0.betweenGroupDelta != nil }) {
+                lines.append("Between-conditions (variant group means, informational):")
+                for row in rows {
+                    guard let delta = row.betweenGroupDelta else { continue }
+                    let means = row.groupMeans
+                        .map { "\($0.name) \($0.mean.map { String(format: "%.3f s", $0) } ?? "—")" }
+                        .joined(separator: " vs ")
+                    lines.append(String(format: "  %4.0f Hz: %@ → Δ %+.1f %%", row.band, means, delta * 100))
+                }
+            }
             for row in rows {
                 if let issue = row.knownIssue {
                     lines.append("⚠︎ \(Int(row.band)) Hz known issue: \(issue)")
@@ -98,6 +124,8 @@ public enum RoomCampaign {
             lines.append("Accuracy (±\(Int(accuracyTolerance * 100)) % vs reference): \(passedAccuracy ? "PASS" : "FAIL")")
             if let exemption = repeatabilityExemption {
                 lines.append("Repeatability: EXEMPT — \(exemption) (spreads above are between-conditions, informational only)")
+            } else if !groupDescriptions.isEmpty {
+                lines.append("Repeatability WITHIN variant groups (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
             } else {
                 lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
             }
@@ -170,10 +198,20 @@ public enum RoomCampaign {
             var warnings: [String] = []
             for file in rewFiles {
                 let text = try String(contentsOf: file, encoding: .utf8)
-                // Validity gate: a clipped reference is no reference.
-                if let peak = measurementPeakDBFS(in: text), peak >= -0.05 {
-                    warnings.append("\(file.lastPathComponent) EXCLUDED — measurement signal peak level \(peak) dBFS (clipped)")
-                    continue
+                if let peak = measurementPeakDBFS(in: text) {
+                    // Validity gate: a clipped reference is no reference.
+                    if peak >= -0.05 {
+                        warnings.append("\(file.lastPathComponent) EXCLUDED — measurement signal peak level \(peak) dBFS (clipped)")
+                        continue
+                    }
+                    // Soft warning: formally clean but too close to the edge
+                    // (office V2 sat at −0.2 dBFS). Kept in the reference.
+                    if peak > -3.0 {
+                        warnings.append(String(
+                            format: "%@ has only %.1f dB of headroom (measurement peak %.1f dBFS) — kept, but aim for ≥ 3 dB on reference takes",
+                            file.lastPathComponent, -peak, peak
+                        ))
+                    }
                 }
                 let rows = try REWImport.parseRT60(text: text)
                 for band in criteriaBands {
@@ -213,6 +251,46 @@ public enum RoomCampaign {
         public let repeatabilityExempt: Bool?
         /// Human-readable justification, surfaced in the room summary.
         public let reason: String?
+        /// Named capture groups for controlled experiments, keyed by group
+        /// name with a case-insensitive filename substring as the value
+        /// (e.g. {"tripod": "TRIPOD", "damped": "DAMPED"}). Repeatability is
+        /// gated WITHIN each group (they are repeat takes of one condition);
+        /// per-band deltas BETWEEN group means are reported as the
+        /// experiment's between-conditions result, informational only.
+        public let variantGroups: [String: String]?
+    }
+
+    /// Assign captures to the configured variant groups by case-insensitive
+    /// filename substring. Returns group name → capture indices (groups
+    /// sorted by name), plus warnings for captures matching no group or
+    /// several groups (such captures stay accuracy-gated but join no group).
+    static func assignGroups(
+        captureNames: [String], groups: [String: String]
+    ) -> (assignment: [(name: String, indices: [Int])], warnings: [String]) {
+        var assignment: [(String, [Int])] = []
+        var claimed: [Int: String] = [:]
+        var warnings: [String] = []
+        for (group, substring) in groups.sorted(by: { $0.key < $1.key }) {
+            var indices: [Int] = []
+            for (i, capture) in captureNames.enumerated()
+            where capture.lowercased().contains(substring.lowercased()) {
+                if let other = claimed[i] {
+                    warnings.append("\(capture) matches groups '\(other)' AND '\(group)' — assigned to neither; fix room_config.json")
+                    claimed[i] = "!ambiguous"
+                } else {
+                    claimed[i] = group
+                    indices.append(i)
+                }
+            }
+            assignment.append((group, indices))
+        }
+        assignment = assignment.map { group, indices in
+            (group, indices.filter { claimed[$0] != "!ambiguous" })
+        }
+        for (i, capture) in captureNames.enumerated() where claimed[i] == nil {
+            warnings.append("\(capture) matches no variant group — accuracy-gated but excluded from repeatability")
+        }
+        return (assignment, warnings)
     }
 
     public static func loadRoomConfig(roomURL: URL) -> RoomConfig? {
@@ -256,6 +334,21 @@ public enum RoomCampaign {
         let repeatabilityExemption: String? = (config?.repeatabilityExempt == true)
             ? (config?.reason ?? "captures are experiment variants, not repeated takes")
             : nil
+        let captureNames = captures.map { $0.lastPathComponent }
+
+        // Repeatability is judged within groups of same-condition takes.
+        // Without variant groups the whole room is one group.
+        var groups: [(name: String, indices: [Int])] = [("", Array(captures.indices))]
+        var groupDescriptions: [String] = []
+        var groupWarnings: [String] = []
+        if let variantGroups = config?.variantGroups, !variantGroups.isEmpty {
+            (groups, groupWarnings) = assignGroups(captureNames: captureNames, groups: variantGroups)
+            groupDescriptions = groups.map { group in
+                "\(group.name): " + (group.indices.isEmpty
+                    ? "(no captures yet)"
+                    : group.indices.map { captureNames[$0] }.joined(separator: ", "))
+            }
+        }
         let outputs = try captures.map { try CapturePipeline.analyze(url: $0) }
 
         var rows: [BandRow] = []
@@ -283,26 +376,46 @@ public enum RoomCampaign {
                 }
             }
 
+            // Repeatability WITHIN each variant group (or the whole room when
+            // ungrouped): pairwise spread and identical windows are gated
+            // among same-condition takes only.
             var worstSpread: Double?
-            let measured = values.compactMap { $0 }
-            if measured.count >= 2 {
-                var spread = 0.0
-                for i in 0..<measured.count {
-                    for j in (i + 1)..<measured.count {
-                        spread = max(spread, abs(measured[i] - measured[j]) / min(measured[i], measured[j]))
+            var windowsMatch = true
+            for group in groups {
+                let groupValues = group.indices.compactMap { values[$0] }
+                if groupValues.count >= 2 {
+                    var spread = 0.0
+                    for i in 0..<groupValues.count {
+                        for j in (i + 1)..<groupValues.count {
+                            spread = max(spread, abs(groupValues[i] - groupValues[j]) / min(groupValues[i], groupValues[j]))
+                        }
+                    }
+                    worstSpread = max(worstSpread ?? 0, spread)
+                    if spread > repeatabilityTolerance(for: band), repeatabilityExemption == nil {
+                        repeatabilityOK = false
                     }
                 }
-                worstSpread = spread
-                if spread > repeatabilityTolerance(for: band), repeatabilityExemption == nil {
-                    repeatabilityOK = false
+                let windows = group.indices.map { decays[$0].map { ($0.windowStartDB, $0.windowEndDB) } }
+                if Set(windows.map { "\($0?.0 ?? .nan):\($0?.1 ?? .nan)" }).count > 1 {
+                    windowsMatch = false
+                    if repeatabilityExemption == nil { repeatabilityOK = false }
                 }
             }
 
-            let windows = decays.map { $0.map { ($0.windowStartDB, $0.windowEndDB) } }
-            let windowsMatch = Set(windows.map { "\($0?.0 ?? .nan):\($0?.1 ?? .nan)" }).count == 1
-            // Window selection differing between variants is between-conditions
-            // too — reported in the table, but only gated for true repeat takes.
-            if !windowsMatch, repeatabilityExemption == nil { repeatabilityOK = false }
+            // Between-conditions result: delta of the extreme group means.
+            var groupMeans: [(name: String, mean: Double?)] = []
+            var betweenGroupDelta: Double?
+            if groups.count >= 2 {
+                groupMeans = groups.map { group in
+                    let groupValues = group.indices.compactMap { values[$0] }
+                    return (group.name, groupValues.isEmpty
+                        ? nil : groupValues.reduce(0, +) / Double(groupValues.count))
+                }
+                let means = groupMeans.compactMap { $0.mean }
+                if means.count >= 2, let lo = means.min(), let hi = means.max(), lo > 0 {
+                    betweenGroupDelta = (hi - lo) / lo
+                }
+            }
 
             rows.append(BandRow(
                 band: band,
@@ -311,18 +424,22 @@ public enum RoomCampaign {
                 worstError: worstError,
                 worstSpread: worstSpread,
                 windowsMatch: windowsMatch,
-                knownIssue: knownIssue
+                knownIssue: knownIssue,
+                groupMeans: groupMeans,
+                betweenGroupDelta: betweenGroupDelta
             ))
         }
 
         return RoomResult(
             name: name,
-            captureNames: captures.map { $0.lastPathComponent },
+            captureNames: captureNames,
             rows: rows,
             passedAccuracy: accuracyOK,
             passedRepeatability: repeatabilityOK,
             referenceWarnings: referenceWarnings,
-            repeatabilityExemption: repeatabilityExemption
+            repeatabilityExemption: repeatabilityExemption,
+            groupDescriptions: groupDescriptions,
+            groupWarnings: groupWarnings
         )
     }
 }

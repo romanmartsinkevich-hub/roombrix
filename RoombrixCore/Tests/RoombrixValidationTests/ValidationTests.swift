@@ -287,7 +287,7 @@ final class ValidationTests: XCTestCase {
         """
         let clean = clipped
             .replacingOccurrences(of: "measurement signal peak level 0.0 dBFS",
-                                  with: "measurement signal peak level -2.0 dBFS")
+                                  with: "measurement signal peak level -6.0 dBFS")
             .replacingOccurrences(of: "0.900", with: "0.700")
         try clipped.write(to: dir.appendingPathComponent("room_rt60_v1.txt"), atomically: true, encoding: .utf8)
         try clean.write(to: dir.appendingPathComponent("room_rt60_v2.txt"), atomically: true, encoding: .utf8)
@@ -304,6 +304,64 @@ final class ValidationTests: XCTestCase {
         XCTAssertEqual(RoomCampaign.measurementPeakDBFS(
             in: "… measurement signal peak level -32.0 dBFS, more"
         ) ?? 99, -32.0, accuracy: 1e-9)
+    }
+
+    func testMarginalHeadroomReferenceWarnsButIsKept() throws {
+        // Office V2 sat at −0.2 dBFS: formally clean, far too close to the
+        // edge. Between −3 and −0.05 dBFS the export stays in the reference
+        // but a headroom warning is emitted.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roombrix-headroom-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let marginal = """
+        RT60 data saved by REW V5.31.1
+        Source: OmniMic, MICROPHONE, L, volume: 1.000. Timing signal peak level -17.6 dBFS, measurement signal peak level -0.2 dBFS
+        Format is freq (Hz), BW (octaves), EDT (s), r, T20 (s), r, T30 (s), r, Topt (s), r, ToptStart (dB), ToptEnd (dB), T60M (s), reverse/forward/zero phase filtered, C50 (dB), C80 (dB), D50 (%), TS (s)
+        500 1/3 0.9 -0.9 0.9 -0.9 0.700 -0.9 0.9 -0.9 -5.0 -35.0 0.0 Forward 1.0 1.0 50.0 0.1
+        """
+        try marginal.write(to: dir.appendingPathComponent("room_rt60.txt"), atomically: true, encoding: .utf8)
+
+        let (reference, warnings) = try RoomCampaign.loadReference(roomURL: dir)
+        XCTAssertEqual(reference[500] ?? 0, 0.700, accuracy: 1e-9, "marginal export must stay in the reference")
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("headroom"))
+        XCTAssertTrue(warnings[0].contains("0.2 dB"))
+    }
+
+    // MARK: - Variant groups (controlled experiments in one room)
+
+    func testVariantGroupAssignment() {
+        let names = [
+            "roombrix_capture_2026-09-10T10-00-00Z_TRIPOD.wav",
+            "roombrix_capture_2026-09-10T10-05-00Z_TRIPOD.wav",
+            "roombrix_capture_2026-09-10T10-10-00Z_DAMPED.wav",
+            "roombrix_capture_2026-09-10T10-15-00Z_damped.wav",
+        ]
+        let (groups, warnings) = RoomCampaign.assignGroups(
+            captureNames: names, groups: ["tripod": "TRIPOD", "damped": "DAMPED"]
+        )
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertEqual(groups.map { $0.name }, ["damped", "tripod"])
+        XCTAssertEqual(groups[0].indices, [2, 3], "substring match must be case-insensitive")
+        XCTAssertEqual(groups[1].indices, [0, 1])
+    }
+
+    func testVariantGroupAssignmentFlagsOrphansAndAmbiguity() {
+        let names = [
+            "roombrix_capture_A_TRIPOD.wav",
+            "roombrix_capture_B_TRIPOD_DAMPED.wav", // matches both — ambiguous
+            "roombrix_capture_C.wav",               // matches neither — orphan
+        ]
+        let (groups, warnings) = RoomCampaign.assignGroups(
+            captureNames: names, groups: ["tripod": "TRIPOD", "damped": "DAMPED"]
+        )
+        XCTAssertEqual(groups.first { $0.name == "tripod" }?.indices, [0])
+        XCTAssertEqual(groups.first { $0.name == "damped" }?.indices, [])
+        XCTAssertEqual(warnings.count, 2)
+        XCTAssertTrue(warnings.contains { $0.contains("B_TRIPOD_DAMPED") && $0.contains("neither") })
+        XCTAssertTrue(warnings.contains { $0.contains("capture_C") && $0.contains("no variant group") })
     }
 
     // MARK: - Comparison harness
