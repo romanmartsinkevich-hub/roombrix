@@ -128,6 +128,10 @@ validation/rooms/<date>-<room-name>/
                               the room summary (first hit: room 4 office,
                               V1 clipped, V2 at −2 dB clean). If every
                               export is clipped the room errors out.
+                              HEADROOM: aim for at least 3 dB — a peak
+                              between −3 and −0.05 dBFS is kept but
+                              draws a headroom warning (office V2 sat at
+                              −0.2 dBFS, far too close to the edge).
     notes.md                ← optional session notes
     room_config.json        ← optional; {"repeatabilityExempt": true,
                               "reason": "..."} when the captures are
@@ -135,7 +139,20 @@ validation/rooms/<date>-<room-name>/
                               pair) rather than repeated takes: spreads
                               and window differences are then reported
                               as informational between-conditions data
-                              but not gated as repeatability
+                              but not gated as repeatability.
+                              For a controlled experiment with repeat
+                              takes PER condition, use variant GROUPS
+                              instead: {"variantGroups": {"tripod":
+                              "TRIPOD", "damped": "DAMPED"}} assigns
+                              captures by case-insensitive filename
+                              substring (rename the app's exports with a
+                              suffix, e.g. ..._TRIPOD.wav). Repeatability
+                              is then gated WITHIN each group, and the
+                              per-band delta BETWEEN group means is
+                              reported as the experiment's result
+                              (informational). Captures matching no
+                              group, or several, draw a warning and stay
+                              accuracy-gated only.
     known_issues.json       ← optional; {"250": "root cause"} quarantines
                               a band from the accuracy gate — only with a
                               documented root cause and pending experiment

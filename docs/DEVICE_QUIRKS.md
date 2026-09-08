@@ -82,11 +82,27 @@ Both orientation-pair captures read 250 Hz LONG vs the OmniMic reference
 (+21/+35 % vs 0.911 s) with a double-sloped EDC: EDT 0.69–0.74 s (close to
 REW's 0.825 s EDT), then a slow ~1.5 s late tail the OmniMic does not see.
 Engine exonerated (reads REW's own office IR at 0.854 s); present in BOTH
-orientations, so orientation is eliminated. Suspected position-coupled
-modal tail in the 177–354 Hz band — a few-cm placement offset couples
-differently to long-decaying room modes. Quarantined in the room's
-`known_issues.json`; pending a two-take pair at one position and ideally a
-capture at the exact OmniMic spot.
+orientations, so orientation is eliminated.
+
+**Leading hypothesis: TRIPOD STRUCTURAL RESONANCE (owner's).** The phone
+sat on a rigid tripod in every campaign capture of rooms 2–4; the OmniMic
+uses its own different stand. A tripod resonance excited by the sound
+field (or coupled through the floor) would produce exactly the observed
+signature: correct early decay (EDT matches the reference) plus a long
+narrow-band late tail the reference never shows. It is mechanical, not
+acoustic — which is why no fit-window choice can avoid it — and it
+explains the room pattern: rooms 2/3/4 (tripod) show LF anomalies, room 1
+(no tripod) never did. The earlier position-coupled-modal-tail idea
+remains the fallback if the tripod test comes back negative.
+
+**Pending experiment (folder prepared, `room4-tripod-experiment`):** same
+room, same position, four captures — two with the phone on the tripod,
+two with the phone on a folded towel/cushion on a stable surface at the
+same height — plus a REW reference. The harness's variant groups gate
+repeatability within each pair and report the tripod-vs-damped delta per
+band. If the LF tail disappears off the tripod, the quarantine resolves
+into a product requirement: warn users against rigid tripods, or damp
+them.
 
 ## Internal-mic correction curves
 
