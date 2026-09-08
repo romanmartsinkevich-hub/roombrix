@@ -1,0 +1,28 @@
+Roombrix measurement — 8 Sep 2026 at 14:14:53
+Input: Микрофон iPhone (MicrophoneBuiltIn) @ 48000 Hz
+Input port: Микрофон iPhone (MicrophoneBuiltIn)
+Data source: Снизу (of 3)
+Polar pattern requested: omnidirectional; granted: Omnidirectional
+Sample rate: 48000 Hz (preferred 48000)
+Mode .measurement accepted: true
+Input gain: 1.00 (settable: no)
+Direct-to-reverberant: 7.9 dB
+Marker confidence: 28.8 dB; latency 7.071 s
+Pre-marker quiet: 39.0 dB
+SNR (peak-to-noise gap): 59.7 dB
+
+Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric
+       63 | 0.481 s |    —    | 14 dB | — | unmeasurable
+      125 | 0.292 s | 0.616 s | 18 dB | -5…-23 | t20
+      250 | 0.395 s | 0.449 s | 34 dB | -5…-35 | t30
+      500 | 0.433 s | 0.407 s | 39 dB | -5…-35 | t30
+     1000 | 0.434 s | 0.443 s | 41 dB | -5…-35 | t30
+     2000 | 0.200 s | 0.437 s | 40 dB | -10…-35 | t20
+     4000 |    —    | 0.436 s | 41 dB | -15…-40 | topt
+     8000 |    —    | 0.433 s | 40 dB | -25…-43 | topt
+Mid-band RT60: 0.425 s
+LF/mid decay ratio: 1.25
+C80: +6.1 dB
+Room Score: 91–97 (engine v1.0.0, provisional calibration)
+Top problem: Flutter echo: A rapid repeating echo between parallel surfaces about 2.6 m apart. That spacing matches NONE of your room's dimensions, so it is not a wall-to-wall problem: look for two hard parallel surfaces roughly 2.6 m apart — typical culprits at this scale are a speaker cabinet facing a wall or window, a glass cabinet facing a table or another cabinet, facing shelf fronts, or the inside of an alcove or niche. To find it: walk the room clapping once every step — the metallic ringing is loudest when you stand between the two surfaces, and it stops when you cover one of them with something soft (a cushion works for testing).
+(Estimates from a consumer microphone, not lab measurements.)
