@@ -10,6 +10,11 @@ struct MeasureView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allRecords: [MeasurementRecord]
     @Query private var rooms: [RoomRecord]
+    @AppStorage("activeRoomName") private var activeRoomName = ""
+
+    private var activeRoom: RoomRecord? {
+        rooms.first { $0.name == activeRoomName } ?? rooms.first
+    }
     @State private var savedResultIDs: Set<UUID> = []
     @State private var packageURLs: (pink: URL, sweep: URL)?
     @State private var packageError: String?
@@ -99,7 +104,7 @@ struct MeasureView: View {
                 Text("Put the phone at your listening position at ear height — on a stand or resting screen-up on a cushion. Do NOT hold it: your body absorbs sound and any movement corrupts the measurement. The screen stays awake by itself during the measurement — don't touch the phone until it finishes (even pressing the lock button adds a click to the recording).")
                     .font(.footnote)
             }
-            if allRecords.contains(where: { $0.isBaseline }) {
+            if allRecords.contains(where: { $0.isBaseline && $0.roomName == activeRoom?.name }) {
                 Section("Re-measuring after a change?") {
                     Text("For a valid before/after comparison, everything must match the baseline session except the change you made:\n• phone at the SAME position and height (your markers on the Plan tab show it)\n• SAME playback volume\n• same room state (doors, curtains)\nThe comparison appears automatically on the Score tab.")
                         .font(.footnote)
@@ -107,13 +112,18 @@ struct MeasureView: View {
             }
             Section("3 — Measure") {
                 Button {
-                    let snapshot = rooms.first.map { GeometrySnapshot(room: $0) }
+                    let snapshot = activeRoom.map { GeometrySnapshot(room: $0) }
                     Task { await coordinator.startAmbient(room: snapshot) }
                 } label: {
                     Label("Start measurement", systemImage: "record.circle")
                         .font(.headline)
                 }
-                if rooms.first == nil {
+                if let room = activeRoom {
+                    Text("Measuring: \(room.name)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if activeRoom == nil {
                     Text("Tip: set up your room on the Plan tab first — the diagnosis can then match findings against your room's actual dimensions.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -176,7 +186,7 @@ struct MeasureView: View {
                         .font(.headline)
                 }
                 Button("Redo background measurement") {
-                    let snapshot = rooms.first.map { GeometrySnapshot(room: $0) }
+                    let snapshot = activeRoom.map { GeometrySnapshot(room: $0) }
                     Task { await coordinator.startAmbient(room: snapshot) }
                 }
                 Button("Skip level setting (I know my volume is right)") {

@@ -7,7 +7,17 @@ import RoombrixScoring
 /// the provisional-calibration status is always visible.
 struct ScoreView: View {
     @Query(sort: \MeasurementRecord.date, order: .reverse)
-    private var records: [MeasurementRecord]
+    private var allRecords: [MeasurementRecord]
+    @Query private var rooms: [RoomRecord]
+    @AppStorage("activeRoomName") private var activeRoomName = ""
+
+    /// Records scoped to the active room. Legacy records without a room
+    /// name stay visible everywhere rather than vanishing.
+    private var records: [MeasurementRecord] {
+        let active = rooms.first { $0.name == activeRoomName } ?? rooms.first
+        guard let active else { return allRecords }
+        return allRecords.filter { $0.roomName == active.name || $0.roomName == nil }
+    }
 
     var body: some View {
         NavigationStack {

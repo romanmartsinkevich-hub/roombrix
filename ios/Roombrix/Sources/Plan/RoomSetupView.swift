@@ -10,6 +10,9 @@ struct RoomSetupView: View {
 
     var body: some View {
         Form {
+            Section("Room name") {
+                TextField("e.g. Living room, Studio, Garage", text: $room.name)
+            }
             Section("Room dimensions (meters)") {
                 dimensionRow("Length (front → back)", value: $room.length, range: 1.5...30)
                 dimensionRow("Width (left → right)", value: $room.width, range: 1.5...30)

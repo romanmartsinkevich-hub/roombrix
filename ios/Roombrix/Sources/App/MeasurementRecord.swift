@@ -41,6 +41,11 @@ final class MeasurementRecord {
     var recordingFileName: String?
     /// Per-band RT60 summaries, JSON-encoded ([BandSummary]).
     var bandsJSON: Data?
+    /// Room this measurement belongs to (nil: measured before rooms existed).
+    var roomName: String?
+    /// Geometry + markers as they were AT CAPTURE TIME (JSON GeometrySnapshot).
+    /// Never re-derived from the live editable room.
+    var geometryJSON: Data?
     /// The "before" reference for before/after comparison. At most one
     /// record should carry this at a time (enforced in the UI).
     var isBaseline: Bool = false
@@ -61,7 +66,13 @@ final class MeasurementRecord {
         self.recordingFileName = result.recordingURL?.lastPathComponent
         let bands = result.report.bandDecays.map { BandSummary(from: $0) }
         self.bandsJSON = try? JSONEncoder().encode(bands)
+        self.roomName = result.geometrySnapshot?.roomName
+        self.geometryJSON = result.geometrySnapshot.flatMap { try? JSONEncoder().encode($0) }
         self.isBaseline = false
+    }
+
+    var decodedGeometry: GeometrySnapshot? {
+        geometryJSON.flatMap { try? JSONDecoder().decode(GeometrySnapshot.self, from: $0) }
     }
 
     var decodedScore: RoomScore? {
