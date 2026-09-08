@@ -1,0 +1,28 @@
+Roombrix measurement — 8 Sep 2026 at 21:26:08
+Input: Микрофон iPhone (MicrophoneBuiltIn) @ 48000 Hz
+Input port: Микрофон iPhone (MicrophoneBuiltIn)
+Data source: Снизу (of 3)
+Polar pattern requested: omnidirectional; granted: Omnidirectional
+Sample rate: 48000 Hz (preferred 48000)
+Mode .measurement accepted: true
+Input gain: 1.00 (settable: no)
+Direct-to-reverberant: 6.0 dB
+Marker confidence: 40.5 dB; latency 8.197 s
+Pre-marker quiet: 36.6 dB
+SNR (peak-to-noise gap): 62.8 dB
+
+Band (Hz) |   EDT   |  RT60   | Range | Window    | Metric
+       63 | 1.337 s | 1.297 s | 26 dB | -5…-31 | t20
+      125 | 1.385 s | 1.386 s | 29 dB | -5…-34 | t20
+      250 | 0.740 s | 1.105 s | 20 dB | -5…-25 | t20
+      500 | 0.779 s | 0.847 s | 32 dB | -5…-35 | t30
+     1000 | 0.791 s | 0.740 s | 36 dB | -5…-35 | t30
+     2000 | 0.702 s | 0.704 s | 41 dB | -5…-35 | t30
+     4000 |    —    | 0.660 s | 43 dB | -10…-35 | t20
+     8000 |    —    | 0.558 s | 42 dB | -20…-43 | topt
+Mid-band RT60: 0.794 s
+LF/mid decay ratio: 1.59
+C80: +1.2 dB
+Room Score: 39–45 (engine v1.0.0, provisional calibration)
+Top problem: Too much reverberation: Sound takes 0.79 s to die away — the ideal for this room is 0.26–0.43 s. Music smears together and speech loses definition.
+(Estimates from a consumer microphone, not lab measurements.)
