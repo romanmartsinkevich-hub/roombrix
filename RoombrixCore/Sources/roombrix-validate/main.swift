@@ -445,6 +445,10 @@ case "campaign":
             print(result.summaryText)
             print("")
             if !result.passed { allPassed = false }
+        } catch RoomCampaign.CampaignError.noCaptures(let room) {
+            print("=== \(room) ===")
+            print("PENDING: no captures uploaded yet — skipped")
+            print("")
         } catch {
             print("=== \(roomURL.lastPathComponent) ===")
             print("ERROR: \(error)")

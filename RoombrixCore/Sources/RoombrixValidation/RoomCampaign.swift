@@ -60,11 +60,16 @@ public enum RoomCampaign {
         public let rows: [BandRow]
         public let passedAccuracy: Bool
         public let passedRepeatability: Bool
+        /// Reference-validity notices (e.g. a clipped REW export excluded).
+        public let referenceWarnings: [String]
         public var passed: Bool { passedAccuracy && passedRepeatability }
 
         public var summaryText: String {
             var lines: [String] = []
             lines.append("=== \(name) (\(captureNames.count) captures) ===")
+            for warning in referenceWarnings {
+                lines.append("⚠︎ reference: \(warning)")
+            }
             lines.append("Band (Hz) | " + captureNames.map { _ in "RT60   " }.joined(separator: " | ")
                 + " | Reference | Worst err | Spread | Windows")
             for row in rows {
@@ -114,9 +119,23 @@ public enum RoomCampaign {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
+    /// REW header validity: a measurement whose signal peak reached 0 dBFS
+    /// clipped — its RT60 values are not a valid reference. Parses
+    /// "measurement signal peak level X dBFS" from the export header.
+    /// Returns nil when the header carries no peak-level info (older REW
+    /// versions) — such files are accepted as-is.
+    static func measurementPeakDBFS(in text: String) -> Double? {
+        guard let range = text.range(of: "measurement signal peak level") else { return nil }
+        let tail = text[range.upperBound...].prefix(24)
+        let token = tail.split(whereSeparator: { $0 == " " || $0 == "\n" }).first
+        return token.flatMap { Double($0) }
+    }
+
     /// Reference RT60 per band center: reference.json takes precedence,
-    /// else the first REW RT60 text export in the folder.
-    public static func loadReference(roomURL: URL) throws -> [Double: Double] {
+    /// else all valid REW RT60 text exports in the folder, averaged.
+    /// Returns the reference plus validity warnings (clipped exports are
+    /// EXCLUDED automatically).
+    public static func loadReference(roomURL: URL) throws -> (reference: [Double: Double], warnings: [String]) {
         let files = (try? FileManager.default.contentsOfDirectory(
             at: roomURL, includingPropertiesForKeys: nil
         )) ?? []
@@ -128,7 +147,7 @@ public enum RoomCampaign {
             for (key, value) in raw {
                 if let band = Double(key) { reference[band] = value }
             }
-            return reference
+            return (reference, [])
         }
 
         // All REW RT60 exports in the folder are AVERAGED per band: when the
@@ -140,8 +159,14 @@ public enum RoomCampaign {
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         if !rewFiles.isEmpty {
             var sums: [Double: (total: Double, count: Int)] = [:]
+            var warnings: [String] = []
             for file in rewFiles {
                 let text = try String(contentsOf: file, encoding: .utf8)
+                // Validity gate: a clipped reference is no reference.
+                if let peak = measurementPeakDBFS(in: text), peak >= -0.05 {
+                    warnings.append("\(file.lastPathComponent) EXCLUDED — measurement signal peak level \(peak) dBFS (clipped)")
+                    continue
+                }
                 let rows = try REWImport.parseRT60(text: text)
                 for band in criteriaBands {
                     // The engine measures full OCTAVE bands; the comparable
@@ -162,7 +187,12 @@ public enum RoomCampaign {
                     }
                 }
             }
-            return sums.mapValues { $0.total / Double($0.count) }
+            guard !sums.isEmpty else {
+                throw CampaignError.noReference(
+                    roomURL.lastPathComponent + " (all RT60 exports excluded: \(warnings.joined(separator: "; ")))"
+                )
+            }
+            return (sums.mapValues { $0.total / Double($0.count) }, warnings)
         }
         throw CampaignError.noReference(roomURL.lastPathComponent)
     }
@@ -196,7 +226,7 @@ public enum RoomCampaign {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard !captures.isEmpty else { throw CampaignError.noCaptures(name) }
 
-        let reference = try loadReference(roomURL: roomURL)
+        let (reference, referenceWarnings) = try loadReference(roomURL: roomURL)
         let knownIssues = loadKnownIssues(roomURL: roomURL)
         let outputs = try captures.map { try CapturePipeline.analyze(url: $0) }
 
@@ -258,7 +288,8 @@ public enum RoomCampaign {
             captureNames: captures.map { $0.lastPathComponent },
             rows: rows,
             passedAccuracy: accuracyOK,
-            passedRepeatability: repeatabilityOK
+            passedRepeatability: repeatabilityOK,
+            referenceWarnings: referenceWarnings
         )
     }
 }

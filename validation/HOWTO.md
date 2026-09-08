@@ -121,6 +121,13 @@ validation/rooms/<date>-<room-name>/
     <anything>rt60<...>.txt ← REW RT60 export(s) for the same position;
                               multiple takes are AVERAGED into the reference
                               (or use reference.json with {"250": 1.041, ...})
+                              VALIDITY: an export whose header shows
+                              "measurement signal peak level 0.0 dBFS"
+                              CLIPPED in REW and is EXCLUDED from the
+                              reference automatically, with a warning in
+                              the room summary (first hit: room 4 office,
+                              V1 clipped, V2 at −2 dB clean). If every
+                              export is clipped the room errors out.
     notes.md                ← optional session notes
     anything else           ← ignored by the harness (REW impulse WAVs,
                               frequency-response exports, app reports are
@@ -133,7 +140,10 @@ room's folder unless it really is the same room and position.
 Every folder is automatically picked up by the acceptance tests and by
 `roombrix-validate campaign validation/rooms`, and judged in the standard
 format: each capture within ±15 % of the reference across 250 Hz–4 kHz,
-takes pairwise within 3 %, identical fit windows.
+takes pairwise within the band-dependent repeatability gate (4 % at
+≥ 1 kHz, 6 % at 250/500 Hz), identical fit windows. A room folder that
+has no captures yet (upload in progress) is reported as PENDING and
+skipped rather than failed.
 
 ## Go/no-go gate (from the brief)
 
