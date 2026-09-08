@@ -129,6 +129,16 @@ validation/rooms/<date>-<room-name>/
                               V1 clipped, V2 at −2 dB clean). If every
                               export is clipped the room errors out.
     notes.md                ← optional session notes
+    room_config.json        ← optional; {"repeatabilityExempt": true,
+                              "reason": "..."} when the captures are
+                              experiment VARIANTS (e.g. an orientation
+                              pair) rather than repeated takes: spreads
+                              and window differences are then reported
+                              as informational between-conditions data
+                              but not gated as repeatability
+    known_issues.json       ← optional; {"250": "root cause"} quarantines
+                              a band from the accuracy gate — only with a
+                              documented root cause and pending experiment
     anything else           ← ignored by the harness (REW impulse WAVs,
                               frequency-response exports, app reports are
                               all fine to include for context)

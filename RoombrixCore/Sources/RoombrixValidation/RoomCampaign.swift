@@ -62,6 +62,10 @@ public enum RoomCampaign {
         public let passedRepeatability: Bool
         /// Reference-validity notices (e.g. a clipped REW export excluded).
         public let referenceWarnings: [String]
+        /// Non-nil when the room's captures are experiment VARIANTS (e.g. an
+        /// orientation pair), not repeated takes of one setup: spreads are
+        /// between-conditions differences, reported but not gated.
+        public let repeatabilityExemption: String?
         public var passed: Bool { passedAccuracy && passedRepeatability }
 
         public var summaryText: String {
@@ -92,7 +96,11 @@ public enum RoomCampaign {
                 }
             }
             lines.append("Accuracy (±\(Int(accuracyTolerance * 100)) % vs reference): \(passedAccuracy ? "PASS" : "FAIL")")
-            lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
+            if let exemption = repeatabilityExemption {
+                lines.append("Repeatability: EXEMPT — \(exemption) (spreads above are between-conditions, informational only)")
+            } else {
+                lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
+            }
             return lines.joined(separator: "\n")
         }
     }
@@ -197,6 +205,22 @@ public enum RoomCampaign {
         throw CampaignError.noReference(roomURL.lastPathComponent)
     }
 
+    /// Optional per-room configuration (room_config.json).
+    public struct RoomConfig: Decodable {
+        /// True when the room's captures are experiment variants (different
+        /// conditions on purpose — e.g. one vertical + one horizontal phone),
+        /// so pairwise spread must NOT be judged as method repeatability.
+        public let repeatabilityExempt: Bool?
+        /// Human-readable justification, surfaced in the room summary.
+        public let reason: String?
+    }
+
+    public static func loadRoomConfig(roomURL: URL) -> RoomConfig? {
+        let url = roomURL.appendingPathComponent("room_config.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(RoomConfig.self, from: data)
+    }
+
     /// Documented per-band deviations (known_issues.json: {"500": "reason"}).
     public static func loadKnownIssues(roomURL: URL) -> [Double: String] {
         let url = roomURL.appendingPathComponent("known_issues.json")
@@ -228,6 +252,10 @@ public enum RoomCampaign {
 
         let (reference, referenceWarnings) = try loadReference(roomURL: roomURL)
         let knownIssues = loadKnownIssues(roomURL: roomURL)
+        let config = loadRoomConfig(roomURL: roomURL)
+        let repeatabilityExemption: String? = (config?.repeatabilityExempt == true)
+            ? (config?.reason ?? "captures are experiment variants, not repeated takes")
+            : nil
         let outputs = try captures.map { try CapturePipeline.analyze(url: $0) }
 
         var rows: [BandRow] = []
@@ -265,12 +293,16 @@ public enum RoomCampaign {
                     }
                 }
                 worstSpread = spread
-                if spread > repeatabilityTolerance(for: band) { repeatabilityOK = false }
+                if spread > repeatabilityTolerance(for: band), repeatabilityExemption == nil {
+                    repeatabilityOK = false
+                }
             }
 
             let windows = decays.map { $0.map { ($0.windowStartDB, $0.windowEndDB) } }
             let windowsMatch = Set(windows.map { "\($0?.0 ?? .nan):\($0?.1 ?? .nan)" }).count == 1
-            if !windowsMatch { repeatabilityOK = false }
+            // Window selection differing between variants is between-conditions
+            // too — reported in the table, but only gated for true repeat takes.
+            if !windowsMatch, repeatabilityExemption == nil { repeatabilityOK = false }
 
             rows.append(BandRow(
                 band: band,
@@ -289,7 +321,8 @@ public enum RoomCampaign {
             rows: rows,
             passedAccuracy: accuracyOK,
             passedRepeatability: repeatabilityOK,
-            referenceWarnings: referenceWarnings
+            referenceWarnings: referenceWarnings,
+            repeatabilityExemption: repeatabilityExemption
         )
     }
 }

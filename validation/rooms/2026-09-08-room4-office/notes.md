@@ -21,13 +21,20 @@ take (V2, −2 dB) is clean. The harness now detects this automatically
 (peak ≥ −0.05 dBFS → export excluded with a warning), so V1 is ignored
 without manual intervention; this note records why.
 
-## Expected results (from the session)
+## Repeatability exemption
 
-Accuracy vs the V2 reference (octave averages of thirds): 500 Hz −5 %,
-1 kHz −9 %, 2 kHz −4 %, 4 kHz −8 %, 8 kHz +8 %. 250 Hz reads **+30 % —
-out of gate**; the app's own two captures disagree by 10 % there
-(1.230 vs 1.105), REW's thirds inside that octave scatter
-0.83/0.94/0.80, and the fit window fell back to T20 in one capture with
-a different range (29 vs 20 dB). Metric selection differing between
-takes at 250 Hz is under investigation as engine behaviour, not a
-capture artefact.
+`room_config.json` marks this room repeatability-exempt: the two
+captures are experiment VARIANTS (orientation pair), so their spread is
+a between-conditions difference, not method scatter. A proper two-take
+pair at one setup is planned for a clean repeatability number.
+
+## Results (harness, V2 reference)
+
+500 Hz +1.8 %, 1 kHz −10.5 %, 2 kHz −4.0 %, 4 kHz −6.9 % — in gate.
+250 Hz reads +21/+35 % — investigated to root cause and quarantined in
+`known_issues.json`: engine exonerated by the REW-IR round-trip
+(0.854 s vs the 0.911 s reference); the phone captures genuinely record
+a double-sloped, slower 250 Hz decay in both orientations. The
+T20-29 dB vs T20-20 dB window difference between takes is fully
+explained by the horizontal take's 4.3 dB higher noise floor at 250 Hz.
+Full analysis: `validation/reports/2026-09-08_room4_report.md`.

@@ -76,6 +76,18 @@ repeatability is not established by this experiment; the
 between-orientation comparison stands because both captures sit far inside
 the take-to-take spread observed across rooms 1–3.
 
+## Open observation: slow 250 Hz late tail on phone captures (room 4 office)
+
+Both orientation-pair captures read 250 Hz LONG vs the OmniMic reference
+(+21/+35 % vs 0.911 s) with a double-sloped EDC: EDT 0.69–0.74 s (close to
+REW's 0.825 s EDT), then a slow ~1.5 s late tail the OmniMic does not see.
+Engine exonerated (reads REW's own office IR at 0.854 s); present in BOTH
+orientations, so orientation is eliminated. Suspected position-coupled
+modal tail in the 177–354 Hz band — a few-cm placement offset couples
+differently to long-decaying room modes. Quarantined in the room's
+`known_issues.json`; pending a two-take pair at one position and ideally a
+capture at the exact OmniMic spot.
+
 ## Internal-mic correction curves
 
 Generic per-model correction curves (labeled "estimated" in the UI) ship as
