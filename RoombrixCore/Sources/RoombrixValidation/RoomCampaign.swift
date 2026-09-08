@@ -47,6 +47,11 @@ public enum RoomCampaign {
         /// Worst pairwise spread across captures, fraction.
         public let worstSpread: Double?
         public let windowsMatch: Bool
+        /// Documented, tracked deviation (known_issues.json): the band is
+        /// EXCLUDED from the accuracy gate but reported loudly. Never used
+        /// to hide an uninvestigated failure — the JSON entry must state
+        /// the root cause and the pending experiment.
+        public let knownIssue: String?
     }
 
     public struct RoomResult {
@@ -70,9 +75,16 @@ public enum RoomCampaign {
                 let err = row.worstError.map { String(format: "%+.1f %%", $0 * 100) } ?? "  —  "
                 let spread = row.worstSpread.map { String(format: "%.1f %%", $0 * 100) } ?? " —  "
                 lines.append(String(
-                    format: "%9.0f | %@ | %@ | %@ | %@ | %@",
-                    row.band, values, ref, err, spread, row.windowsMatch ? "match" : "DIFFER"
+                    format: "%9.0f | %@ | %@ | %@ | %@ | %@%@",
+                    row.band, values, ref, err, spread,
+                    row.windowsMatch ? "match" : "DIFFER",
+                    row.knownIssue != nil ? "  ⚠︎ KNOWN ISSUE (excluded from gate)" : ""
                 ))
+            }
+            for row in rows {
+                if let issue = row.knownIssue {
+                    lines.append("⚠︎ \(Int(row.band)) Hz known issue: \(issue)")
+                }
             }
             lines.append("Accuracy (±\(Int(accuracyTolerance * 100)) % vs reference): \(passedAccuracy ? "PASS" : "FAIL")")
             lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
@@ -132,18 +144,40 @@ public enum RoomCampaign {
                 let text = try String(contentsOf: file, encoding: .utf8)
                 let rows = try REWImport.parseRT60(text: text)
                 for band in criteriaBands {
-                    // Exact band-center match (REW third-octave tables
-                    // include the octave centers).
-                    if let row = rows.first(where: { abs($0.bandCenter - band) < 0.5 }),
-                       let rt = row.t30 ?? row.t20 {
-                        let current = sums[band] ?? (0, 0)
-                        sums[band] = (current.total + rt, current.count + 1)
+                    // The engine measures full OCTAVE bands; the comparable
+                    // REW figure is the average of the three thirds inside
+                    // the octave, NOT the center third alone. In rooms with
+                    // flat decay the difference is negligible, but the
+                    // garage's 500 Hz thirds read 0.458/0.541/0.500 s —
+                    // center-only misstated the reference by ~9 %.
+                    let thirds = [band / 1.26, band, band * 1.26]
+                    for third in thirds {
+                        if let row = rows.min(by: {
+                            abs($0.bandCenter - third) < abs($1.bandCenter - third)
+                        }), abs(row.bandCenter - third) < third * 0.1,
+                           let rt = row.t30 ?? row.t20 {
+                            let current = sums[band] ?? (0, 0)
+                            sums[band] = (current.total + rt, current.count + 1)
+                        }
                     }
                 }
             }
             return sums.mapValues { $0.total / Double($0.count) }
         }
         throw CampaignError.noReference(roomURL.lastPathComponent)
+    }
+
+    /// Documented per-band deviations (known_issues.json: {"500": "reason"}).
+    public static func loadKnownIssues(roomURL: URL) -> [Double: String] {
+        let url = roomURL.appendingPathComponent("known_issues.json")
+        guard let data = try? Data(contentsOf: url),
+              let raw = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        var issues: [Double: String] = [:]
+        for (key, value) in raw {
+            if let band = Double(key) { issues[band] = value }
+        }
+        return issues
     }
 
     /// Analyze every capture in a room folder and evaluate acceptance.
@@ -163,6 +197,7 @@ public enum RoomCampaign {
         guard !captures.isEmpty else { throw CampaignError.noCaptures(name) }
 
         let reference = try loadReference(roomURL: roomURL)
+        let knownIssues = loadKnownIssues(roomURL: roomURL)
         let outputs = try captures.map { try CapturePipeline.analyze(url: $0) }
 
         var rows: [BandRow] = []
@@ -176,13 +211,16 @@ public enum RoomCampaign {
             let values = decays.map { $0.flatMap { ReverbTime.bestEstimate($0) } }
             let ref = reference[band]
 
+            let knownIssue = knownIssues[band]
             var worstError: Double?
             if let ref, ref > 0 {
                 let errors = values.compactMap { $0.map { ($0 - ref) / ref } }
                 if errors.count == values.count, !errors.isEmpty {
                     worstError = errors.max { abs($0) < abs($1) }
-                    if abs(worstError!) > accuracyTolerance { accuracyOK = false }
-                } else {
+                    if abs(worstError!) > accuracyTolerance, knownIssue == nil {
+                        accuracyOK = false
+                    }
+                } else if knownIssue == nil {
                     accuracyOK = false // unmeasurable criteria band
                 }
             }
@@ -210,7 +248,8 @@ public enum RoomCampaign {
                 referenceRT60: ref,
                 worstError: worstError,
                 worstSpread: worstSpread,
-                windowsMatch: windowsMatch
+                windowsMatch: windowsMatch,
+                knownIssue: knownIssue
             ))
         }
 

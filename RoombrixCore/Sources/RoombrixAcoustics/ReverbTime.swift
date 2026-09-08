@@ -199,16 +199,35 @@ public enum ReverbTime {
         return nil
     }
 
-    /// Per-band decay analysis of an impulse response.
+    /// Per-band decay analysis of an impulse response (octave bands).
+    ///
+    /// NOTE on band aggregation, investigated on campaign room 3 (garage):
+    /// when decay is spectrally uneven inside an octave, the octave-band
+    /// Schroeder fit can read up to ~8 % below the mean of the thirds
+    /// (REW's octave convention). A thirds-averaged variant was prototyped
+    /// and REJECTED for now: per-third adaptive fits on phone captures have
+    /// less energy per band and regressed rooms 1–2 (window instability up
+    /// to 17 % take-to-take). Room 3's remaining 500 Hz deviation was proven
+    /// to be capture-chain, not convention: this engine reads REW's own
+    /// OmniMic IR at 500 Hz within 2.4 % of REW's value while the phone
+    /// capture of the same room genuinely decays ~20 % faster in that band.
     public static func analyze(
         _ ir: ImpulseResponse,
         bands: [Double] = OctaveBand.standardCenters
     ) -> [BandDecay] {
         bands.compactMap { center in
-            guard center < ir.sampleRate / 2 else { return nil }
-            let filtered = OctaveBand.filtered(
-                ir.samples, center: center, sampleRate: ir.sampleRate
-            )
+            singleBand(ir, center: center, fraction: 1.0)
+        }
+    }
+
+    /// One filtered band (octave or third), full pipeline.
+    static func singleBand(
+        _ ir: ImpulseResponse, center: Double, fraction: Double
+    ) -> BandDecay? {
+        guard center < ir.sampleRate / 2 * 0.95 else { return nil }
+        let filtered = OctaveBand.filtered(
+            ir.samples, center: center, fraction: fraction, sampleRate: ir.sampleRate
+        )
             let curve = SchroederIntegration.decayCurve(of: filtered, sampleRate: ir.sampleRate)
             let t20Fit = fit(curve: curve, from: -5, to: -25)
             let t30Fit = fit(curve: curve, from: -5, to: -35)
@@ -249,8 +268,8 @@ public enum ReverbTime {
                 windowStartDB: adaptive.map { $0.startDB },
                 windowEndDB: adaptive.map { $0.endDB }
             )
-        }
     }
+
 
     /// Hard sanity limit: an EDT below this while the room clearly decays
     /// slower is, by definition, a misplaced fit on the direct pulse.

@@ -351,6 +351,7 @@ case "edc":
     }
     let url = URL(fileURLWithPath: args[1])
     let sweepDuration = flagValue("--duration", in: args).flatMap(Double.init) ?? 10
+    let fraction = flagValue("--fraction", in: args).flatMap(Double.init) ?? 1.0
     let audio: WAVFile.Audio
     do {
         audio = try AudioLoader.load(url: url)
@@ -373,7 +374,7 @@ case "edc":
         directIndex: deconvolved.peakIndex
     )
 
-    let filtered = OctaveBand.filtered(ir.samples, center: band, sampleRate: ir.sampleRate)
+    let filtered = OctaveBand.filtered(ir.samples, center: band, fraction: fraction, sampleRate: ir.sampleRate)
     print("EDC diagnostics: \(Int(band)) Hz octave band of \(url.lastPathComponent)")
     print("margin = dB above the estimated noise floor at which backward integration truncates")
     print("(margin -999 disables truncation: the full noisy tail is integrated)")
