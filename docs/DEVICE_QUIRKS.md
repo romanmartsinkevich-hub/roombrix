@@ -44,16 +44,49 @@ this automatically — paste its report into the row):
 - Multiple built-in mics: verify which one the default route selects and pin
   it (bottom mic preferred; avoid the noise-cancelling-processed routes).
 
-## Open observation: LF readings vs phone orientation (room 2, 2026-09-07)
+## CLOSED: phone orientation does NOT explain capture deviations (negative result)
 
-Room 2 (phone on a tripod, VERTICAL, screen facing the system, bottom mic
-pointing down): 250 Hz–4 kHz within ±9 % of the OmniMic reference, but the
-125 Hz octave read 35–40 % SHORT while REW's own third-octave values there
-scattered 0.51–0.74 s between takes. Possible interaction of vertical
-orientation / bottom-port mic facing the tripod with low-frequency pickup.
-Informational bands only — but worth a controlled orientation test
-(same room, same position, phone horizontal vs vertical) before trusting
-sub-250 Hz data on tripod-mounted captures.
+Controlled experiment, room 4 office (2026-09-08): same position, same
+room, one capture per orientation (vertical vs horizontal):
+
+| band    | vertical | horizontal | delta |
+|---------|----------|------------|-------|
+| 125 Hz  | 1.314    | 1.386      | +5 %  |
+| 250 Hz  | 1.230    | 1.105      | −10 % |
+| 500 Hz  | 0.830    | 0.847      | +2 %  |
+| 1 kHz   | 0.720    | 0.740      | +3 %  |
+| 2 kHz   | 0.692    | 0.704      | +2 %  |
+| 4 kHz   | 0.635    | 0.660      | +4 %  |
+| 8 kHz   | 0.565    | 0.558      | −1 %  |
+
+Orientation makes no material difference at 500 Hz–8 kHz: every delta sits
+inside normal take-to-take spread. The orientation hypothesis — raised for
+the garage 500 Hz miss (room 3, ~20 % short vs OmniMic) and the rooms 2/3
+low-frequency observations (125 Hz −35 % in room 2, +25 % in room 3) — is
+therefore **REJECTED**. The garage 500 Hz quarantine keeps its
+non-diffuse-field explanation (concentrated junk-pile absorption →
+direction-dependent decay), with orientation now eliminated as a factor.
+The LF observations remain open without an orientation component; note
+that REW's own third-octave values at 125 Hz scattered 0.51–0.74 s between
+takes in room 2, so much of the LF disagreement is field/positioning
+variance, not the phone.
+
+Caveat: one capture per orientation only, so within-orientation
+repeatability is not established by this experiment; the
+between-orientation comparison stands because both captures sit far inside
+the take-to-take spread observed across rooms 1–3.
+
+## Open observation: slow 250 Hz late tail on phone captures (room 4 office)
+
+Both orientation-pair captures read 250 Hz LONG vs the OmniMic reference
+(+21/+35 % vs 0.911 s) with a double-sloped EDC: EDT 0.69–0.74 s (close to
+REW's 0.825 s EDT), then a slow ~1.5 s late tail the OmniMic does not see.
+Engine exonerated (reads REW's own office IR at 0.854 s); present in BOTH
+orientations, so orientation is eliminated. Suspected position-coupled
+modal tail in the 177–354 Hz band — a few-cm placement offset couples
+differently to long-decaying room modes. Quarantined in the room's
+`known_issues.json`; pending a two-take pair at one position and ideally a
+capture at the exact OmniMic spot.
 
 ## Internal-mic correction curves
 

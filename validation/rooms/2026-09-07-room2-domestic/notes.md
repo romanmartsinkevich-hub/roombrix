@@ -11,7 +11,8 @@
   frequency-response/impulse text exports included for context; the
   harness ignores them.
 - App reports (текст-*.txt) from the two captures included.
-- PENDING VERIFICATION: the app flagged "flutter echo, surfaces ~1.0 m
-  apart" as the top problem in both takes. Owner will clap-test; if no
-  audible flutter, these captures become regression fixtures for a
-  flutter-detector false positive.
+- FLUTTER CONFIRMED (clap test, two listeners): clear metallic ringing,
+  previously unnoticed by the room's owner. Spacing ~1.0 m matches no room
+  dimension → furniture-scale parallel pair (localisation pending). These
+  captures are enforced TRUE-POSITIVE fixtures for the flutter detector;
+  room 1's captures are the enforced true negatives.

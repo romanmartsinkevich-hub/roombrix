@@ -11,6 +11,15 @@ public enum RoomPurpose: String, CaseIterable, Sendable, Codable {
     /// Target mid-band RT60 range (seconds) for a reference volume of ~50 m³.
     /// The engine scales the target with room volume (larger rooms may
     /// legitimately decay longer).
+    ///
+    /// [ROOM1] PROVISIONAL — THE MOST CONSEQUENTIAL TUNED VALUE IN THE
+    /// PRODUCT: this range drives the decay subscore (30 % weight) and has
+    /// produced the top diagnosed problem in both campaign rooms so far
+    /// ("ideal 0.28–0.47 s" after volume scaling). It is a design target
+    /// from the brief, not a measured quantity, and cannot be validated
+    /// against REW; only the multi-room dataset (and listener judgment) can
+    /// calibrate it. Tracked in Calibration.swift's provenance scheme even
+    /// though it lives here as a per-purpose function.
     var baseRT60Target: ClosedRange<Double> {
         switch self {
         case .listening: return 0.30...0.50

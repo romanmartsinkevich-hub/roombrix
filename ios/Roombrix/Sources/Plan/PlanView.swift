@@ -10,14 +10,35 @@ struct PlanView: View {
     @Query private var rooms: [RoomRecord]
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var coordinator: MeasurementCoordinator
+    @AppStorage("activeRoomName") private var activeRoomName = ""
+
+    /// The room all tabs work with. Selection survives restarts by name.
+    var activeRoom: RoomRecord? {
+        rooms.first { $0.name == activeRoomName } ?? rooms.first
+    }
 
     var body: some View {
         NavigationStack {
-            if let room = rooms.first {
+            if let room = activeRoom {
                 planContent(room: room)
-                    .navigationTitle("Plan")
+                    .navigationTitle(room.name)
                     .toolbar {
-                        NavigationLink("Edit room") {
+                        Menu {
+                            ForEach(rooms, id: \.persistentModelID) { candidate in
+                                Button(candidate.name + (candidate.persistentModelID == room.persistentModelID ? " ✓" : "")) {
+                                    activeRoomName = candidate.name
+                                }
+                            }
+                            Divider()
+                            Button("New room…") {
+                                let newRoom = RoomRecord(name: "Room \(rooms.count + 1)")
+                                modelContext.insert(newRoom)
+                                activeRoomName = newRoom.name
+                            }
+                        } label: {
+                            Label("Rooms", systemImage: "square.split.bottomrightquarter")
+                        }
+                        NavigationLink("Edit") {
                             RoomSetupView(room: room)
                         }
                     }

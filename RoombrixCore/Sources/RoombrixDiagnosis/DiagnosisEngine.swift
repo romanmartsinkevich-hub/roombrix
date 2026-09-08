@@ -317,8 +317,12 @@ public enum DiagnosisEngine {
     private static func flutterRule(_ input: Input, priority: inout Int) -> Finding? {
         guard let flutter = input.report.flutterEcho else { return nil }
 
-        // Identify the wall pair whose spacing matches the detected period.
-        var wallPairText = "a pair of parallel reflective surfaces"
+        // Identify the wall pair whose spacing matches the detected period —
+        // or state explicitly that NO room dimension matches, which means a
+        // furniture-scale pair of parallel surfaces (validated on a real
+        // room: a 1.0 m detection in a 4.2 × 3.75 × 2.6 m room was
+        // clap-confirmed and matched no wall pair).
+        var wallPairText: String?
         var surfaces: [Surface] = []
         if let geometry = input.geometry {
             let candidates: [(Surface, Double)] = [
@@ -339,29 +343,80 @@ public enum DiagnosisEngine {
             }
         }
 
+        let isFloorCeiling = surfaces.contains(.floor)
+        let explanation: String
+        if let wallPairText {
+            if isFloorCeiling {
+                explanation = String(
+                    format: "A rapid repeating echo bounces vertically between the floor and the ceiling (about %.1f m — this matches your floor-to-ceiling distance). Typical in rooms with a hard bare floor under a hard ceiling. Clap your hands while standing in the open part of the room and you'll hear a metallic ringing.",
+                    flutter.surfaceSpacing
+                )
+            } else {
+                explanation = String(
+                    format: "A rapid repeating echo bounces between %@ (about %.1f m apart — this matches your room's dimensions). Clap your hands between them and you'll hear a metallic ringing.",
+                    wallPairText, flutter.surfaceSpacing
+                )
+            }
+        } else if input.geometry != nil {
+            explanation = String(
+                format: """
+                A rapid repeating echo between parallel surfaces about %.1f m apart. \
+                That spacing matches NONE of your room's dimensions, so it is not a wall-to-wall problem: \
+                look for two hard parallel surfaces roughly %.1f m apart — typical culprits at this scale are \
+                a speaker cabinet facing a wall or window, a glass cabinet facing a table or another cabinet, \
+                facing shelf fronts, or the inside of an alcove or niche. \
+                To find it: walk the room clapping once every step — the metallic ringing is loudest when you stand \
+                between the two surfaces, and it stops when you cover one of them with something soft (a cushion works for testing).
+                """,
+                flutter.surfaceSpacing, flutter.surfaceSpacing
+            )
+        } else {
+            // No geometry available: never claim a dimension check happened.
+            explanation = String(
+                format: """
+                A rapid repeating echo between parallel surfaces about %.1f m apart. \
+                Compare that spacing with your room's dimensions (set up your room on the Plan tab and this check happens automatically): \
+                if it matches a wall-to-wall or floor-to-ceiling distance, that pair is the culprit; \
+                if not, look for furniture-scale parallel surfaces about %.1f m apart. \
+                To localise: walk the room clapping once every step — the ringing is loudest between the two surfaces.
+                """,
+                flutter.surfaceSpacing, flutter.surfaceSpacing
+            )
+        }
+
         let severity = min(1, 0.3 + flutter.strength)
         let problem = Problem(
             kind: .flutterEcho,
             severity: severity,
             title: "Flutter echo",
-            explanation: String(
-                format: "A rapid repeating echo bounces between %@ (about %.1f m apart). Clap your hands and you'll hear a metallic ringing.",
-                wallPairText, flutter.surfaceSpacing
-            )
+            explanation: explanation
         )
-        let treatment = TreatmentType.broadbandAbsorber5cm
+        // Floor/ceiling flutter needs floor-appropriate advice — a rug, not
+        // wall panels "at ear height" (garage finding: 2.6 m detection
+        // exactly matched the ceiling height).
+        let treatment: TreatmentType? = surfaces.isEmpty
+            ? nil
+            : (isFloorCeiling ? .rug : .broadbandAbsorber5cm)
+        let placementText: String
+        if surfaces.isEmpty {
+            placementText = "Once you've localised the pair (see the problem description), make ONE of the two surfaces non-reflective: reposition the furniture slightly out of parallel, or put something absorbing/diffusing on one side. A few degrees of angle or one soft surface breaks the ping-pong path."
+        } else if isFloorCeiling {
+            placementText = "Break the vertical bounce at ONE end: a thick rug or soft floor covering over the reflection zone between the speakers and your seat is usually the practical fix; ceiling absorption works equally well where a rug is not an option."
+        } else {
+            placementText = "Treat ONE side of the identified wall pair — absorption or diffusion on a single surface breaks the ping-pong path. Covering roughly 2 m² at ear/speaker height is usually enough."
+        }
         let rec = Recommendation(
             problem: .flutterEcho,
             treatment: treatment,
-            areaSquareMeters: 2,
+            areaSquareMeters: surfaces.isEmpty ? nil : (isFloorCeiling ? 4 : 2),
             placement: .init(
                 surfaces: surfaces,
-                description: "Treat ONE side of the identified wall pair — absorption or diffusion on a single surface breaks the ping-pong path. Covering roughly 2 m² at ear/speaker height is usually enough."
+                description: placementText
             ),
             predictedScoreImpact: predictedImpact(severity: severity, weight: SubscoreKind.clarity.weight / 2),
-            costTier: treatment.costTier,
+            costTier: treatment?.costTier ?? .free,
             effortTier: .low,
-            rationale: "Flutter needs two bare parallel surfaces; removing the reflectivity of either one kills the echo. A bookshelf, wall hanging, or a few panels on one wall is sufficient — you do not need to treat both sides.",
+            rationale: "Flutter needs two bare parallel surfaces; removing the reflectivity (or the parallelism) of either one kills the echo. You do not need to treat both sides.",
             priority: priority
         )
         priority += 1

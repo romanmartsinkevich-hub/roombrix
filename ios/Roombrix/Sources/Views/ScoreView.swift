@@ -7,13 +7,45 @@ import RoombrixScoring
 /// the provisional-calibration status is always visible.
 struct ScoreView: View {
     @Query(sort: \MeasurementRecord.date, order: .reverse)
-    private var records: [MeasurementRecord]
+    private var allRecords: [MeasurementRecord]
+    @Query private var rooms: [RoomRecord]
+    @AppStorage("activeRoomName") private var activeRoomName = ""
+
+    /// Records scoped to the active room. Legacy records without a room
+    /// name stay visible everywhere rather than vanishing.
+    private var records: [MeasurementRecord] {
+        let active = rooms.first { $0.name == activeRoomName } ?? rooms.first
+        guard let active else { return allRecords }
+        return allRecords.filter { $0.roomName == active.name || $0.roomName == nil }
+    }
 
     var body: some View {
         NavigationStack {
             if let latest = records.first {
                 List {
                     scoreCard(latest)
+                    if let baseline = records.first(where: { $0.isBaseline }),
+                       baseline.persistentModelID != latest.persistentModelID {
+                        Section("Before / After") {
+                            NavigationLink {
+                                BeforeAfterView(baseline: baseline, current: latest)
+                            } label: {
+                                HStack {
+                                    Label("Compare with baseline", systemImage: "arrow.left.arrow.right")
+                                    Spacer()
+                                    let delta = latest.scoreValue - baseline.scoreValue
+                                    if abs(delta) <= MeasurementConstants.scoreNoisePoints {
+                                        Text("≈ no change")
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text("\(Int(delta.rounded()) >= 0 ? "+" : "")\(Int(delta.rounded()))")
+                                            .monospacedDigit()
+                                            .foregroundStyle(delta >= 0 ? .green : .red)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let problem = latest.topProblemText {
                         Section("Top problem") {
                             Text(problem)
@@ -25,6 +57,9 @@ struct ScoreView: View {
                                 SubscoreRow(subscore: subscore)
                             }
                         }
+                    }
+                    Section("Share") {
+                        ShareCardSection(card: ScoreCardView(record: latest), label: "Share score card")
                     }
                     Section {
                         Label(ScoreEngine.calibrationNote, systemImage: "exclamationmark.triangle")
@@ -97,8 +132,14 @@ struct SubscoreRow: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            Gauge(value: subscore.value, in: 0...100) { EmptyView() }
-                .tint(gaugeColor)
+            if subscore.isMeasured {
+                Gauge(value: subscore.value, in: 0...100) { EmptyView() }
+                    .tint(gaugeColor)
+            } else {
+                Text("not measured")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
             Text(subscore.explanation)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -117,9 +158,26 @@ struct SubscoreRow: View {
 
 struct RecordDetailView: View {
     let record: MeasurementRecord
+    @Query private var allRecords: [MeasurementRecord]
 
     var body: some View {
         List {
+            Section {
+                if record.isBaseline {
+                    Label("This is the baseline ('before') measurement", systemImage: "flag.fill")
+                        .foregroundStyle(.blue)
+                    Button("Remove baseline mark") { record.isBaseline = false }
+                } else {
+                    Button {
+                        for other in allRecords { other.isBaseline = false }
+                        record.isBaseline = true
+                    } label: {
+                        Label("Use as baseline ('before' state)", systemImage: "flag")
+                    }
+                }
+            } footer: {
+                Text("Mark the measurement taken BEFORE a change (treatment installed, speakers moved). New measurements are then compared against it on the Score tab.")
+            }
             Section("Room Score") {
                 LabeledContent(
                     "Score",

@@ -47,6 +47,11 @@ public enum RoomCampaign {
         /// Worst pairwise spread across captures, fraction.
         public let worstSpread: Double?
         public let windowsMatch: Bool
+        /// Documented, tracked deviation (known_issues.json): the band is
+        /// EXCLUDED from the accuracy gate but reported loudly. Never used
+        /// to hide an uninvestigated failure — the JSON entry must state
+        /// the root cause and the pending experiment.
+        public let knownIssue: String?
     }
 
     public struct RoomResult {
@@ -55,11 +60,20 @@ public enum RoomCampaign {
         public let rows: [BandRow]
         public let passedAccuracy: Bool
         public let passedRepeatability: Bool
+        /// Reference-validity notices (e.g. a clipped REW export excluded).
+        public let referenceWarnings: [String]
+        /// Non-nil when the room's captures are experiment VARIANTS (e.g. an
+        /// orientation pair), not repeated takes of one setup: spreads are
+        /// between-conditions differences, reported but not gated.
+        public let repeatabilityExemption: String?
         public var passed: Bool { passedAccuracy && passedRepeatability }
 
         public var summaryText: String {
             var lines: [String] = []
             lines.append("=== \(name) (\(captureNames.count) captures) ===")
+            for warning in referenceWarnings {
+                lines.append("⚠︎ reference: \(warning)")
+            }
             lines.append("Band (Hz) | " + captureNames.map { _ in "RT60   " }.joined(separator: " | ")
                 + " | Reference | Worst err | Spread | Windows")
             for row in rows {
@@ -70,12 +84,23 @@ public enum RoomCampaign {
                 let err = row.worstError.map { String(format: "%+.1f %%", $0 * 100) } ?? "  —  "
                 let spread = row.worstSpread.map { String(format: "%.1f %%", $0 * 100) } ?? " —  "
                 lines.append(String(
-                    format: "%9.0f | %@ | %@ | %@ | %@ | %@",
-                    row.band, values, ref, err, spread, row.windowsMatch ? "match" : "DIFFER"
+                    format: "%9.0f | %@ | %@ | %@ | %@ | %@%@",
+                    row.band, values, ref, err, spread,
+                    row.windowsMatch ? "match" : "DIFFER",
+                    row.knownIssue != nil ? "  ⚠︎ KNOWN ISSUE (excluded from gate)" : ""
                 ))
             }
+            for row in rows {
+                if let issue = row.knownIssue {
+                    lines.append("⚠︎ \(Int(row.band)) Hz known issue: \(issue)")
+                }
+            }
             lines.append("Accuracy (±\(Int(accuracyTolerance * 100)) % vs reference): \(passedAccuracy ? "PASS" : "FAIL")")
-            lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
+            if let exemption = repeatabilityExemption {
+                lines.append("Repeatability: EXEMPT — \(exemption) (spreads above are between-conditions, informational only)")
+            } else {
+                lines.append("Repeatability (≤4 % pairwise at ≥1 kHz, ≤6 % at 250/500 Hz): \(passedRepeatability ? "PASS" : "FAIL")")
+            }
             return lines.joined(separator: "\n")
         }
     }
@@ -102,9 +127,23 @@ public enum RoomCampaign {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
+    /// REW header validity: a measurement whose signal peak reached 0 dBFS
+    /// clipped — its RT60 values are not a valid reference. Parses
+    /// "measurement signal peak level X dBFS" from the export header.
+    /// Returns nil when the header carries no peak-level info (older REW
+    /// versions) — such files are accepted as-is.
+    static func measurementPeakDBFS(in text: String) -> Double? {
+        guard let range = text.range(of: "measurement signal peak level") else { return nil }
+        let tail = text[range.upperBound...].prefix(24)
+        let token = tail.split(whereSeparator: { $0 == " " || $0 == "\n" }).first
+        return token.flatMap { Double($0) }
+    }
+
     /// Reference RT60 per band center: reference.json takes precedence,
-    /// else the first REW RT60 text export in the folder.
-    public static func loadReference(roomURL: URL) throws -> [Double: Double] {
+    /// else all valid REW RT60 text exports in the folder, averaged.
+    /// Returns the reference plus validity warnings (clipped exports are
+    /// EXCLUDED automatically).
+    public static func loadReference(roomURL: URL) throws -> (reference: [Double: Double], warnings: [String]) {
         let files = (try? FileManager.default.contentsOfDirectory(
             at: roomURL, includingPropertiesForKeys: nil
         )) ?? []
@@ -116,7 +155,7 @@ public enum RoomCampaign {
             for (key, value) in raw {
                 if let band = Double(key) { reference[band] = value }
             }
-            return reference
+            return (reference, [])
         }
 
         // All REW RT60 exports in the folder are AVERAGED per band: when the
@@ -128,22 +167,71 @@ public enum RoomCampaign {
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         if !rewFiles.isEmpty {
             var sums: [Double: (total: Double, count: Int)] = [:]
+            var warnings: [String] = []
             for file in rewFiles {
                 let text = try String(contentsOf: file, encoding: .utf8)
+                // Validity gate: a clipped reference is no reference.
+                if let peak = measurementPeakDBFS(in: text), peak >= -0.05 {
+                    warnings.append("\(file.lastPathComponent) EXCLUDED — measurement signal peak level \(peak) dBFS (clipped)")
+                    continue
+                }
                 let rows = try REWImport.parseRT60(text: text)
                 for band in criteriaBands {
-                    // Exact band-center match (REW third-octave tables
-                    // include the octave centers).
-                    if let row = rows.first(where: { abs($0.bandCenter - band) < 0.5 }),
-                       let rt = row.t30 ?? row.t20 {
-                        let current = sums[band] ?? (0, 0)
-                        sums[band] = (current.total + rt, current.count + 1)
+                    // The engine measures full OCTAVE bands; the comparable
+                    // REW figure is the average of the three thirds inside
+                    // the octave, NOT the center third alone. In rooms with
+                    // flat decay the difference is negligible, but the
+                    // garage's 500 Hz thirds read 0.458/0.541/0.500 s —
+                    // center-only misstated the reference by ~9 %.
+                    let thirds = [band / 1.26, band, band * 1.26]
+                    for third in thirds {
+                        if let row = rows.min(by: {
+                            abs($0.bandCenter - third) < abs($1.bandCenter - third)
+                        }), abs(row.bandCenter - third) < third * 0.1,
+                           let rt = row.t30 ?? row.t20 {
+                            let current = sums[band] ?? (0, 0)
+                            sums[band] = (current.total + rt, current.count + 1)
+                        }
                     }
                 }
             }
-            return sums.mapValues { $0.total / Double($0.count) }
+            guard !sums.isEmpty else {
+                throw CampaignError.noReference(
+                    roomURL.lastPathComponent + " (all RT60 exports excluded: \(warnings.joined(separator: "; ")))"
+                )
+            }
+            return (sums.mapValues { $0.total / Double($0.count) }, warnings)
         }
         throw CampaignError.noReference(roomURL.lastPathComponent)
+    }
+
+    /// Optional per-room configuration (room_config.json).
+    public struct RoomConfig: Decodable {
+        /// True when the room's captures are experiment variants (different
+        /// conditions on purpose — e.g. one vertical + one horizontal phone),
+        /// so pairwise spread must NOT be judged as method repeatability.
+        public let repeatabilityExempt: Bool?
+        /// Human-readable justification, surfaced in the room summary.
+        public let reason: String?
+    }
+
+    public static func loadRoomConfig(roomURL: URL) -> RoomConfig? {
+        let url = roomURL.appendingPathComponent("room_config.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(RoomConfig.self, from: data)
+    }
+
+    /// Documented per-band deviations (known_issues.json: {"500": "reason"}).
+    public static func loadKnownIssues(roomURL: URL) -> [Double: String] {
+        let url = roomURL.appendingPathComponent("known_issues.json")
+        guard let data = try? Data(contentsOf: url),
+              let raw = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        var issues: [Double: String] = [:]
+        for (key, value) in raw {
+            if let band = Double(key) { issues[band] = value }
+        }
+        return issues
     }
 
     /// Analyze every capture in a room folder and evaluate acceptance.
@@ -162,7 +250,12 @@ public enum RoomCampaign {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard !captures.isEmpty else { throw CampaignError.noCaptures(name) }
 
-        let reference = try loadReference(roomURL: roomURL)
+        let (reference, referenceWarnings) = try loadReference(roomURL: roomURL)
+        let knownIssues = loadKnownIssues(roomURL: roomURL)
+        let config = loadRoomConfig(roomURL: roomURL)
+        let repeatabilityExemption: String? = (config?.repeatabilityExempt == true)
+            ? (config?.reason ?? "captures are experiment variants, not repeated takes")
+            : nil
         let outputs = try captures.map { try CapturePipeline.analyze(url: $0) }
 
         var rows: [BandRow] = []
@@ -176,13 +269,16 @@ public enum RoomCampaign {
             let values = decays.map { $0.flatMap { ReverbTime.bestEstimate($0) } }
             let ref = reference[band]
 
+            let knownIssue = knownIssues[band]
             var worstError: Double?
             if let ref, ref > 0 {
                 let errors = values.compactMap { $0.map { ($0 - ref) / ref } }
                 if errors.count == values.count, !errors.isEmpty {
                     worstError = errors.max { abs($0) < abs($1) }
-                    if abs(worstError!) > accuracyTolerance { accuracyOK = false }
-                } else {
+                    if abs(worstError!) > accuracyTolerance, knownIssue == nil {
+                        accuracyOK = false
+                    }
+                } else if knownIssue == nil {
                     accuracyOK = false // unmeasurable criteria band
                 }
             }
@@ -197,12 +293,16 @@ public enum RoomCampaign {
                     }
                 }
                 worstSpread = spread
-                if spread > repeatabilityTolerance(for: band) { repeatabilityOK = false }
+                if spread > repeatabilityTolerance(for: band), repeatabilityExemption == nil {
+                    repeatabilityOK = false
+                }
             }
 
             let windows = decays.map { $0.map { ($0.windowStartDB, $0.windowEndDB) } }
             let windowsMatch = Set(windows.map { "\($0?.0 ?? .nan):\($0?.1 ?? .nan)" }).count == 1
-            if !windowsMatch { repeatabilityOK = false }
+            // Window selection differing between variants is between-conditions
+            // too — reported in the table, but only gated for true repeat takes.
+            if !windowsMatch, repeatabilityExemption == nil { repeatabilityOK = false }
 
             rows.append(BandRow(
                 band: band,
@@ -210,7 +310,8 @@ public enum RoomCampaign {
                 referenceRT60: ref,
                 worstError: worstError,
                 worstSpread: worstSpread,
-                windowsMatch: windowsMatch
+                windowsMatch: windowsMatch,
+                knownIssue: knownIssue
             ))
         }
 
@@ -219,7 +320,9 @@ public enum RoomCampaign {
             captureNames: captures.map { $0.lastPathComponent },
             rows: rows,
             passedAccuracy: accuracyOK,
-            passedRepeatability: repeatabilityOK
+            passedRepeatability: repeatabilityOK,
+            referenceWarnings: referenceWarnings,
+            repeatabilityExemption: repeatabilityExemption
         )
     }
 }

@@ -1,5 +1,15 @@
 # Installing Roombrix on your own iPhone (no developer experience needed)
 
+> **CURRENT TEST BRANCH: `cursor/roombrix-m4-before-after-c271`** (Milestone 4:
+> before/after, history, share card). One-line update-and-build:
+>
+> ```bash
+> cd ~/roombrix && git fetch origin && git checkout cursor/roombrix-m4-before-after-c271 && git pull && cd ios/Roombrix && xcodegen generate && open Roombrix.xcodeproj
+> ```
+>
+> This banner always names the branch to be on; everything below is the
+> one-time setup.
+
 You'll install two free tools on the Mac, run three copy-paste commands, and
 press Run in Xcode. Total ~30–60 minutes the first time (mostly Xcode's
 download).
@@ -30,9 +40,10 @@ a time:
 # 2. Tools: git (usually present) and xcodegen:
 brew install xcodegen
 
-# 3. Get the code (use the PR branch) and generate the Xcode project:
-git clone -b cursor/roombrix-core-foundation-c271 https://github.com/romanmartsinkevich-hub/roombrix.git
-cd roombrix/ios/Roombrix && xcodegen generate && open Roombrix.xcodeproj
+# 3. Get the code (the banner at the top names the branch to check out):
+git clone https://github.com/romanmartsinkevich-hub/roombrix.git
+cd roombrix && git checkout cursor/roombrix-m4-before-after-c271
+cd ios/Roombrix && xcodegen generate && open Roombrix.xcodeproj
 ```
 
 ## Step 3 — signing (once, in Xcode)

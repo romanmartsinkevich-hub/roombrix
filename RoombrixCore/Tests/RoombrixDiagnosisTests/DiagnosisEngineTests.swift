@@ -138,6 +138,74 @@ final class DiagnosisEngineTests: XCTestCase {
         XCTAssertTrue(rec!.placement.description.contains("ONE side"))
     }
 
+    func testFlutterLocalPairGetsLocalisationGuidance() {
+        // Real case (room 2, clap-verified): 1.0 m flutter in a
+        // 4.2 × 3.75 × 2.6 m room — matches no room dimension, so the card
+        // must say so, name furniture-scale culprits, and give the
+        // walk-and-clap localisation procedure.
+        let geometry = RoomGeometry(length: 4.2, width: 3.75, height: 2.6)
+        let diagnosis = DiagnosisEngine.diagnose(.init(
+            report: makeReport(
+                rt60: 0.6,
+                flutter: .init(period: 0.00583, surfaceSpacing: 1.0, strength: 0.4)
+            ),
+            geometry: geometry
+        ))
+        let problem = diagnosis.problems.first { $0.kind == .flutterEcho }
+        XCTAssertNotNil(problem)
+        XCTAssertTrue(problem!.explanation.contains("matches NONE of your room's dimensions"))
+        XCTAssertTrue(problem!.explanation.contains("speaker cabinet"),
+                      "furniture-scale culprits must be listed")
+        XCTAssertTrue(problem!.explanation.contains("clapping once every step"),
+                      "walk-and-clap localisation procedure must be included")
+
+        let rec = diagnosis.recommendations.first { $0.problem == .flutterEcho }
+        XCTAssertNotNil(rec)
+        XCTAssertNil(rec!.treatment, "no purchase until the pair is localised")
+        XCTAssertEqual(rec!.costTier, .free)
+        XCTAssertTrue(rec!.placement.surfaces.isEmpty)
+    }
+
+    func testFlutterFloorCeilingMatchGetsRugAdvice() {
+        // Garage finding: 2.6 m flutter == ceiling height exactly. The card
+        // must say floor-to-ceiling and prescribe a rug/soft covering, not
+        // wall panels at ear height.
+        let geometry = RoomGeometry(length: 5.0, width: 5.45, height: 2.6)
+        let diagnosis = DiagnosisEngine.diagnose(.init(
+            report: makeReport(
+                rt60: 0.45,
+                flutter: .init(period: 0.01516, surfaceSpacing: 2.6, strength: 0.4)
+            ),
+            geometry: geometry
+        ))
+        let problem = diagnosis.problems.first { $0.kind == .flutterEcho }
+        XCTAssertNotNil(problem)
+        XCTAssertTrue(problem!.explanation.contains("floor-to-ceiling"),
+                      "height match must be named explicitly")
+
+        let rec = diagnosis.recommendations.first { $0.problem == .flutterEcho }
+        XCTAssertNotNil(rec)
+        XCTAssertEqual(rec!.treatment, .rug)
+        XCTAssertEqual(Set(rec!.placement.surfaces), Set([.floor, .ceiling]))
+        XCTAssertTrue(rec!.placement.description.contains("rug"))
+    }
+
+    func testFlutterWithoutGeometryNeverClaimsDimensionCheck() {
+        let diagnosis = DiagnosisEngine.diagnose(.init(
+            report: makeReport(
+                rt60: 0.5,
+                flutter: .init(period: 0.0058, surfaceSpacing: 1.0, strength: 0.4)
+            )
+            // no geometry
+        ))
+        let problem = diagnosis.problems.first { $0.kind == .flutterEcho }
+        XCTAssertNotNil(problem)
+        XCTAssertFalse(problem!.explanation.contains("NONE of your room"),
+                       "must not claim a dimension check that never happened")
+        XCTAssertTrue(problem!.explanation.contains("Plan tab"),
+                      "should direct the user to set up the room")
+    }
+
     func testOverdampedRoomGetsDiffusionNotAbsorption() {
         let diagnosis = DiagnosisEngine.diagnose(.init(
             report: makeReport(rt60: 0.15), geometry: geometry

@@ -114,6 +114,37 @@ final class ScoreEngineTests: XCTestCase {
         XCTAssertGreaterThan(RoomPurpose.studio.minC80, RoomPurpose.listening.minC80)
     }
 
+    func testUnmeasuredSubscoresExcludedAndRenormalized() {
+        // Single position (default): FR smoothness is NOT measured and must
+        // not act as a zero — a terrible smoothness figure must not change
+        // the composite at all.
+        let smoothInput = ScoreEngine.Input(report: makeReport(rt60: 0.4, smoothness: 2.0))
+        let roughInput = ScoreEngine.Input(report: makeReport(rt60: 0.4, smoothness: 12.0))
+        let smooth = ScoreEngine.score(smoothInput)
+        let rough = ScoreEngine.score(roughInput)
+
+        let fr = smooth.subscores.first { $0.kind == .frequencySmoothness }!
+        XCTAssertFalse(fr.isMeasured, "single position → FR not measured")
+        XCTAssertEqual(smooth.value, rough.value, accuracy: 1e-9,
+                       "unmeasured subscore must not influence the composite")
+
+        // With ≥ 2 positions FR is measured and participates again.
+        let multi = ScoreEngine.score(.init(
+            report: makeReport(rt60: 0.4, smoothness: 2.0),
+            measurementPositionCount: 3
+        ))
+        let multiFR = multi.subscores.first { $0.kind == .frequencySmoothness }!
+        XCTAssertTrue(multiFR.isMeasured)
+
+        // Renormalization: with FR (weight 0.2) excluded and every measured
+        // subscore at value v, the composite must equal v, not 0.8·v.
+        let allGood = ScoreEngine.score(.init(report: makeReport(rt60: 0.4)))
+        let measured = allGood.subscores.filter { $0.isMeasured }
+        let expected = measured.reduce(0) { $0 + $1.value * $1.kind.weight }
+            / measured.reduce(0) { $0 + $1.kind.weight }
+        XCTAssertEqual(allGood.value, expected, accuracy: 1e-9)
+    }
+
     func testUnmeasuredMetricsFallBackToNeutral() {
         var report = makeReport(rt60: 0.4)
         report = AcousticReport(

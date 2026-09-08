@@ -268,6 +268,44 @@ final class ValidationTests: XCTestCase {
         XCTAssertThrowsError(try REWImport.parseRT60(text: "* only comments\n* nothing else"))
     }
 
+    // MARK: - Reference validity (clipped REW exports)
+
+    func testClippedREWReferenceIsExcluded() throws {
+        // Real case (room 4): the first REW take clipped — header showed
+        // "measurement signal peak level 0.0 dBFS". Such exports must be
+        // excluded from the reference automatically, with a warning.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("roombrix-refcheck-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let clipped = """
+        RT60 data saved by REW V5.31.1
+        Source: OmniMic, MICROPHONE, L, volume: 1.000. Timing signal peak level -3.0 dBFS, measurement signal peak level 0.0 dBFS
+        Format is freq (Hz), BW (octaves), EDT (s), r, T20 (s), r, T30 (s), r, Topt (s), r, ToptStart (dB), ToptEnd (dB), T60M (s), reverse/forward/zero phase filtered, C50 (dB), C80 (dB), D50 (%), TS (s)
+        500 1/3 0.9 -0.9 0.9 -0.9 0.900 -0.9 0.9 -0.9 -5.0 -35.0 0.0 Forward 1.0 1.0 50.0 0.1
+        """
+        let clean = clipped
+            .replacingOccurrences(of: "measurement signal peak level 0.0 dBFS",
+                                  with: "measurement signal peak level -2.0 dBFS")
+            .replacingOccurrences(of: "0.900", with: "0.700")
+        try clipped.write(to: dir.appendingPathComponent("room_rt60_v1.txt"), atomically: true, encoding: .utf8)
+        try clean.write(to: dir.appendingPathComponent("room_rt60_v2.txt"), atomically: true, encoding: .utf8)
+
+        let (reference, warnings) = try RoomCampaign.loadReference(roomURL: dir)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("room_rt60_v1.txt"))
+        XCTAssertTrue(warnings[0].contains("clipped"))
+        // Only the clean take contributes: 500 Hz = 0.700, not the average.
+        XCTAssertEqual(reference[500] ?? 0, 0.700, accuracy: 1e-9)
+
+        // Header parser edge: no peak info → accepted (nil).
+        XCTAssertNil(RoomCampaign.measurementPeakDBFS(in: "RT60 data\nBand EDT T20 T30\n500 0.5 0.5 0.5"))
+        XCTAssertEqual(RoomCampaign.measurementPeakDBFS(
+            in: "… measurement signal peak level -32.0 dBFS, more"
+        ) ?? 99, -32.0, accuracy: 1e-9)
+    }
+
     // MARK: - Comparison harness
 
     func makeDecay(_ center: Double, rt: Double) -> ReverbTime.BandDecay {

@@ -39,6 +39,8 @@ targets:
         # can be handed back for CLI cross-verification.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # Capture must survive a deliberate lock-button press mid-measurement.
+        UIBackgroundModes: [audio]
         NSMicrophoneUsageDescription: >-
           Roombrix listens to a test sweep played through your speakers to
           measure how your room behaves acoustically. Audio is processed

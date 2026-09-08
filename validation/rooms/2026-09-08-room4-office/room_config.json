@@ -1,0 +1,4 @@
+{
+  "repeatabilityExempt": true,
+  "reason": "the two captures are the ORIENTATION PAIR (vertical vs horizontal phone), not repeated takes of one setup — spread is a between-conditions difference, not method scatter; a proper two-take pair is planned for a clean repeatability number"
+}

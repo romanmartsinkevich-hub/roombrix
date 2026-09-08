@@ -34,11 +34,17 @@ final class EndToEndCaptureTests: XCTestCase {
         XCTAssertFalse(rooms.isEmpty, "at least the acceptance room must be present")
 
         for roomURL in rooms {
-            let result = try RoomCampaign.analyze(roomURL: roomURL)
-            XCTAssertTrue(result.passedAccuracy,
-                          "\(result.name) accuracy FAILED:\n\(result.summaryText)")
-            XCTAssertTrue(result.passedRepeatability,
-                          "\(result.name) repeatability FAILED:\n\(result.summaryText)")
+            do {
+                let result = try RoomCampaign.analyze(roomURL: roomURL)
+                XCTAssertTrue(result.passedAccuracy,
+                              "\(result.name) accuracy FAILED:\n\(result.summaryText)")
+                XCTAssertTrue(result.passedRepeatability,
+                              "\(result.name) repeatability FAILED:\n\(result.summaryText)")
+            } catch RoomCampaign.CampaignError.noCaptures {
+                // Room folder created but captures not uploaded yet
+                // (uploads land in multiple commits) — pending, not failing.
+                continue
+            }
         }
     }
 
@@ -84,6 +90,86 @@ final class EndToEndCaptureTests: XCTestCase {
         }
         XCTAssertEqual(snr, 58.6, accuracy: 4.0,
                        "estimated SNR must land within a few dB of the measured gap")
+    }
+
+    func testFitWindowsNeverExtendBelowTheNoiseLimit() throws {
+        // M1 rule (item 4 of the 2026-08-29 review): the window END must
+        // never fall below (noise plateau + safety margin). Since
+        // usableDecayRangeDB = windowStart − endLimit, the invariant is
+        // equivalently: window span ≤ usable range, in EVERY band of EVERY
+        // fixture. (A window may legally consume the entire range — end
+        // exactly AT the limit — as room 1's 8 kHz band does with its
+        // −55…−73 dB window over an 18 dB range.)
+        for url in Self.allCaptureURLs() {
+            let result = try CapturePipeline.analyze(url: url)
+            for decay in result.decays {
+                guard let start = decay.windowStartDB,
+                      let end = decay.windowEndDB,
+                      let usable = decay.usableDecayRangeDB
+                else { continue }
+                XCTAssertLessThanOrEqual(
+                    start - end, usable + 0.01,
+                    "\(url.lastPathComponent) @ \(Int(decay.centerFrequency)) Hz: window \(start)…\(end) exceeds usable range \(usable)"
+                )
+            }
+        }
+    }
+
+    static func allCaptureURLs() -> [URL] {
+        var urls = [recordingsURL
+            .appendingPathComponent("roombrix_capture_2026-08-29T17-29-12Z.wav")]
+        for room in RoomCampaign.discoverRooms(in: roomsURL) {
+            let wavs = ((try? FileManager.default.contentsOfDirectory(
+                at: room, includingPropertiesForKeys: nil
+            )) ?? []).filter {
+                $0.pathExtension.lowercased() == "wav"
+                    && $0.lastPathComponent.lowercased().hasPrefix("roombrix_capture")
+            }
+            urls.append(contentsOf: wavs)
+        }
+        return urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    func testFlutterDetectorGroundTruth() throws {
+        // TRUE POSITIVE — room 2 (2026-09-07): the app flagged "flutter,
+        // surfaces ~1.0 m apart" as the top problem; the owner clap-tested
+        // and CONFIRMED clear metallic ringing (two listeners), previously
+        // unnoticed. The spacing matches no room dimension (4.2 × 3.75 ×
+        // 2.6 m) → furniture-scale pair. Both captures must keep detecting
+        // it at that spacing.
+        let room2 = Self.roomsURL.appendingPathComponent("2026-09-07-room2-domestic")
+        for name in [
+            "roombrix_capture_2026-09-07T15-53-07Z.wav",
+            "roombrix_capture_2026-09-07T15-56-07Z.wav",
+        ] {
+            let url = room2.appendingPathComponent(name)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw XCTSkip("room-2 fixture \(name) not present")
+            }
+            let output = try CapturePipeline.analyze(url: url)
+            guard let flutter = output.report.flutterEcho else {
+                XCTFail("\(name): confirmed flutter must be detected")
+                continue
+            }
+            XCTAssertEqual(flutter.surfaceSpacing, 1.0, accuracy: 0.4,
+                           "\(name): clap-verified spacing ≈ 1.0 m")
+        }
+
+        // TRUE NEGATIVE — room 1 (2026-08-29): no audible flutter in the
+        // room; the detector must stay silent on both captures.
+        let room1 = Self.roomsURL.appendingPathComponent("2026-08-29-room1-domestic")
+        for name in [
+            "roombrix_capture_2026-08-29T18-48-12Z.wav",
+            "roombrix_capture_2026-08-29T18-50-46Z.wav",
+        ] {
+            let url = room1.appendingPathComponent(name)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw XCTSkip("room-1 fixture \(name) not present")
+            }
+            let output = try CapturePipeline.analyze(url: url)
+            XCTAssertNil(output.report.flutterEcho,
+                         "\(name): no audible flutter in this room — detection would be a false positive")
+        }
     }
 
     func testEDTNeverReportsImpossibleValues() throws {

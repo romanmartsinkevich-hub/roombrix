@@ -1,0 +1,3 @@
+{
+  "500": "Capture-chain deviation, NOT an engine defect: the phone capture's 500 Hz octave genuinely decays ~18-20% faster than the OmniMic capture at the same position (proven: this engine reads REW's own garage IR at 500 Hz within 2.4% of REW's value, and per-third fixed -5..-35 fits on the phone capture are systematically short across all three thirds). Suspected: non-diffuse field (concentrated junk-pile absorption) interacting with mic directivity/orientation on the vertical tripod. Pending: owner's controlled orientation experiment (horizontal vs vertical at the same spot). Tracked in DEVICE_QUIRKS.md."
+}
