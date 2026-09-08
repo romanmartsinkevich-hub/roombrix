@@ -29,7 +29,7 @@ struct BeforeAfterView: View {
                     .monospacedDigit()
                     Text(deltaText)
                         .font(.headline)
-                        .foregroundStyle(scoreDelta >= 0 ? .green : .red)
+                        .foregroundStyle(deltaStyle)
                     Text("Same engine version required for a meaningful delta: \(baseline.scoreEngineVersion) → \(current.scoreEngineVersion)")
                         .font(.caption2)
                         .foregroundStyle(baseline.scoreEngineVersion == current.scoreEngineVersion
@@ -86,9 +86,21 @@ struct BeforeAfterView: View {
 
     private var scoreDelta: Double { current.scoreValue - baseline.scoreValue }
 
+    private var isSignificant: Bool {
+        abs(scoreDelta) > MeasurementConstants.scoreNoisePoints
+    }
+
     private var deltaText: String {
+        guard isSignificant else {
+            return "no significant change (within ±\(Int(MeasurementConstants.scoreNoisePoints))-point measurement noise)"
+        }
         let d = Int(scoreDelta.rounded())
         return d >= 0 ? "+\(d) points" : "\(d) points"
+    }
+
+    private var deltaStyle: AnyShapeStyle {
+        guard isSignificant else { return AnyShapeStyle(.secondary) }
+        return scoreDelta >= 0 ? AnyShapeStyle(.green) : AnyShapeStyle(.red)
     }
 
     private func range(_ record: MeasurementRecord) -> String {

@@ -89,9 +89,15 @@ struct DeltaCardView: View {
                     .font(.system(size: 44, weight: .bold, design: .rounded))
             }
             .monospacedDigit()
-            Text(delta >= 0 ? "+\(delta) points" : "\(delta) points")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(delta >= 0 ? .green : .red)
+            if abs(after.scoreValue - before.scoreValue) <= MeasurementConstants.scoreNoisePoints {
+                Text("no significant change")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(delta >= 0 ? "+\(delta) points" : "\(delta) points")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(delta >= 0 ? .green : .red)
+            }
             Text("\(before.date.formatted(date: .abbreviated, time: .omitted)) → \(after.date.formatted(date: .abbreviated, time: .omitted))")
                 .font(.caption)
                 .foregroundStyle(.tertiary)

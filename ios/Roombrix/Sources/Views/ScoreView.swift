@@ -33,9 +33,15 @@ struct ScoreView: View {
                                 HStack {
                                     Label("Compare with baseline", systemImage: "arrow.left.arrow.right")
                                     Spacer()
-                                    Text("\(Int((latest.scoreValue - baseline.scoreValue).rounded()) >= 0 ? "+" : "")\(Int((latest.scoreValue - baseline.scoreValue).rounded()))")
-                                        .monospacedDigit()
-                                        .foregroundStyle(latest.scoreValue >= baseline.scoreValue ? .green : .red)
+                                    let delta = latest.scoreValue - baseline.scoreValue
+                                    if abs(delta) <= MeasurementConstants.scoreNoisePoints {
+                                        Text("≈ no change")
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text("\(Int(delta.rounded()) >= 0 ? "+" : "")\(Int(delta.rounded()))")
+                                            .monospacedDigit()
+                                            .foregroundStyle(delta >= 0 ? .green : .red)
+                                    }
                                 }
                             }
                         }

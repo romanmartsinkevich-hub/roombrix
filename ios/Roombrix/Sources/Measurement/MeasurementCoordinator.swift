@@ -158,6 +158,14 @@ enum MeasurementConstants {
     static let targetSNRdB = Calibration.pinkNoiseTargetSNRdB
     static let snrBands: [Double] = [250, 500, 1_000, 2_000, 4_000]
     static let maxSweepRecordingSeconds = 180.0
+
+    /// Score-delta significance threshold, points. Below this a before/after
+    /// difference reads "within measurement noise", neutral colour — never a
+    /// red regression. Provenance [ROOM1+ROOM2+ROOM3]: campaign repeatability
+    /// gates are ≤4 % (≥1 kHz) / ≤6 % (250/500 Hz) per band; propagated
+    /// through the subscore weights that is ≈ ±2 score points, matching the
+    /// original M1 acceptance ("score delta ≤ 2 points on unchanged rooms").
+    static let scoreNoisePoints = 2.0
 }
 
 /// Per-band live/ambient level for the UI.
