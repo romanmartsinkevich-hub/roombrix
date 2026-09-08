@@ -9,6 +9,7 @@ struct MeasureView: View {
     @EnvironmentObject private var coordinator: MeasurementCoordinator
     @Environment(\.modelContext) private var modelContext
     @Query private var allRecords: [MeasurementRecord]
+    @Query private var rooms: [RoomRecord]
     @State private var savedResultIDs: Set<UUID> = []
     @State private var packageURLs: (pink: URL, sweep: URL)?
     @State private var packageError: String?
@@ -106,10 +107,16 @@ struct MeasureView: View {
             }
             Section("3 — Measure") {
                 Button {
-                    Task { await coordinator.startAmbient() }
+                    let snapshot = rooms.first.map { GeometrySnapshot(room: $0) }
+                    Task { await coordinator.startAmbient(room: snapshot) }
                 } label: {
                     Label("Start measurement", systemImage: "record.circle")
                         .font(.headline)
+                }
+                if rooms.first == nil {
+                    Text("Tip: set up your room on the Plan tab first — the diagnosis can then match findings against your room's actual dimensions.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             Section("Device check (once per device)") {
@@ -169,7 +176,8 @@ struct MeasureView: View {
                         .font(.headline)
                 }
                 Button("Redo background measurement") {
-                    Task { await coordinator.startAmbient() }
+                    let snapshot = rooms.first.map { GeometrySnapshot(room: $0) }
+                    Task { await coordinator.startAmbient(room: snapshot) }
                 }
                 Button("Skip level setting (I know my volume is right)") {
                     coordinator.skipLevelSetting()

@@ -343,13 +343,21 @@ public enum DiagnosisEngine {
             }
         }
 
+        let isFloorCeiling = surfaces.contains(.floor)
         let explanation: String
         if let wallPairText {
-            explanation = String(
-                format: "A rapid repeating echo bounces between %@ (about %.1f m apart — this matches your room's dimensions). Clap your hands between them and you'll hear a metallic ringing.",
-                wallPairText, flutter.surfaceSpacing
-            )
-        } else {
+            if isFloorCeiling {
+                explanation = String(
+                    format: "A rapid repeating echo bounces vertically between the floor and the ceiling (about %.1f m — this matches your floor-to-ceiling distance). Typical in rooms with a hard bare floor under a hard ceiling. Clap your hands while standing in the open part of the room and you'll hear a metallic ringing.",
+                    flutter.surfaceSpacing
+                )
+            } else {
+                explanation = String(
+                    format: "A rapid repeating echo bounces between %@ (about %.1f m apart — this matches your room's dimensions). Clap your hands between them and you'll hear a metallic ringing.",
+                    wallPairText, flutter.surfaceSpacing
+                )
+            }
+        } else if input.geometry != nil {
             explanation = String(
                 format: """
                 A rapid repeating echo between parallel surfaces about %.1f m apart. \
@@ -362,6 +370,18 @@ public enum DiagnosisEngine {
                 """,
                 flutter.surfaceSpacing, flutter.surfaceSpacing
             )
+        } else {
+            // No geometry available: never claim a dimension check happened.
+            explanation = String(
+                format: """
+                A rapid repeating echo between parallel surfaces about %.1f m apart. \
+                Compare that spacing with your room's dimensions (set up your room on the Plan tab and this check happens automatically): \
+                if it matches a wall-to-wall or floor-to-ceiling distance, that pair is the culprit; \
+                if not, look for furniture-scale parallel surfaces about %.1f m apart. \
+                To localise: walk the room clapping once every step — the ringing is loudest between the two surfaces.
+                """,
+                flutter.surfaceSpacing, flutter.surfaceSpacing
+            )
         }
 
         let severity = min(1, 0.3 + flutter.strength)
@@ -371,20 +391,30 @@ public enum DiagnosisEngine {
             title: "Flutter echo",
             explanation: explanation
         )
-        let treatment = TreatmentType.broadbandAbsorber5cm
-        let placementText = surfaces.isEmpty
-            ? "Once you've localised the pair (see the problem description), make ONE of the two surfaces non-reflective: reposition the furniture slightly out of parallel, or put something absorbing/diffusing on one side. A few degrees of angle or one soft surface breaks the ping-pong path."
-            : "Treat ONE side of the identified wall pair — absorption or diffusion on a single surface breaks the ping-pong path. Covering roughly 2 m² at ear/speaker height is usually enough."
+        // Floor/ceiling flutter needs floor-appropriate advice — a rug, not
+        // wall panels "at ear height" (garage finding: 2.6 m detection
+        // exactly matched the ceiling height).
+        let treatment: TreatmentType? = surfaces.isEmpty
+            ? nil
+            : (isFloorCeiling ? .rug : .broadbandAbsorber5cm)
+        let placementText: String
+        if surfaces.isEmpty {
+            placementText = "Once you've localised the pair (see the problem description), make ONE of the two surfaces non-reflective: reposition the furniture slightly out of parallel, or put something absorbing/diffusing on one side. A few degrees of angle or one soft surface breaks the ping-pong path."
+        } else if isFloorCeiling {
+            placementText = "Break the vertical bounce at ONE end: a thick rug or soft floor covering over the reflection zone between the speakers and your seat is usually the practical fix; ceiling absorption works equally well where a rug is not an option."
+        } else {
+            placementText = "Treat ONE side of the identified wall pair — absorption or diffusion on a single surface breaks the ping-pong path. Covering roughly 2 m² at ear/speaker height is usually enough."
+        }
         let rec = Recommendation(
             problem: .flutterEcho,
-            treatment: surfaces.isEmpty ? nil : treatment,
-            areaSquareMeters: surfaces.isEmpty ? nil : 2,
+            treatment: treatment,
+            areaSquareMeters: surfaces.isEmpty ? nil : (isFloorCeiling ? 4 : 2),
             placement: .init(
                 surfaces: surfaces,
                 description: placementText
             ),
             predictedScoreImpact: predictedImpact(severity: severity, weight: SubscoreKind.clarity.weight / 2),
-            costTier: surfaces.isEmpty ? .free : treatment.costTier,
+            costTier: treatment?.costTier ?? .free,
             effortTier: .low,
             rationale: "Flutter needs two bare parallel surfaces; removing the reflectivity (or the parallelism) of either one kills the echo. You do not need to treat both sides.",
             priority: priority

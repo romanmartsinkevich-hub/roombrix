@@ -1,12 +1,48 @@
 import Foundation
 import RoombrixDSP
 import RoombrixAcoustics
+import RoombrixGeometry
 import RoombrixScoring
 import RoombrixDiagnosis
 import RoombrixValidation
 #if canImport(UIKit)
 import UIKit
 #endif
+
+/// Geometry + markers SNAPSHOTTED at capture time. Measurements must never
+/// reference the live editable room: re-entering dimensions for another
+/// space would retroactively change older measurements' modal predictions,
+/// reflection points and flutter matching.
+struct GeometrySnapshot: Codable {
+    let roomName: String
+    let length: Double
+    let width: Double
+    let height: Double
+    let speakerPositions: [[Double]]  // [x, y, z] per speaker
+    let listenerPosition: [Double]
+
+    init(room: RoomRecord) {
+        self.roomName = room.name
+        self.length = room.length
+        self.width = room.width
+        self.height = room.height
+        self.speakerPositions = room.speakerPositions.map { [$0.x, $0.y, $0.z] }
+        let listener = room.listenerPosition
+        self.listenerPosition = [listener.x, listener.y, listener.z]
+    }
+
+    var geometry: RoomGeometry {
+        RoomGeometry(length: length, width: width, height: height)
+    }
+
+    var speakers: [Point3D] {
+        speakerPositions.map { Point3D(x: $0[0], y: $0[1], z: $0[2]) }
+    }
+
+    var listener: Point3D {
+        Point3D(x: listenerPosition[0], y: listenerPosition[1], z: listenerPosition[2])
+    }
+}
 
 /// One completed measurement, formatted identically to the CLI so results
 /// are directly comparable against the REW reference workflow.
@@ -28,6 +64,8 @@ struct MeasurementResult: Identifiable {
     /// (never from the level-setting stage): plain-language "replay
     /// louder/quieter" guidance. Empty when the capture is fine.
     let qualityAdvice: [String]
+    /// Geometry snapshot taken at capture time (nil: no room set up yet).
+    let geometrySnapshot: GeometrySnapshot?
     /// Room Score (provisional v1 calibration — see ScoreEngine).
     let score: RoomScore
     /// The single most severe diagnosed problem (free tier shows this).
@@ -182,10 +220,13 @@ final class MeasurementCoordinator: ObservableObject {
 
     // MARK: - Stage A: ambient
 
-    func startAmbient() async {
+    private var pendingGeometry: GeometrySnapshot?
+
+    func startAmbient(room: GeometrySnapshot?) async {
         phase = .preparing
         result = nil
         ambientWarning = nil
+        pendingGeometry = room
         setKeepAwake(true)
 
         guard await AudioMeasurementEngine.requestPermission() else {
@@ -345,13 +386,15 @@ final class MeasurementCoordinator: ObservableObject {
         let inputDescription = engine.inputDescription
         let setupReport = engine.setupReport
         let ambient = ambientBuffer
+        let snapshot = pendingGeometry
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let outcome = Self.process(
                 recording: recording, ambient: ambient,
                 sampleRate: fs,
                 inputDescription: inputDescription,
-                captureSetupReport: setupReport
+                captureSetupReport: setupReport,
+                geometrySnapshot: snapshot
             )
             await MainActor.run {
                 guard let self else { return }
@@ -409,7 +452,8 @@ final class MeasurementCoordinator: ObservableObject {
         ambient: [Double],
         sampleRate fs: Double,
         inputDescription: String,
-        captureSetupReport: String = ""
+        captureSetupReport: String = "",
+        geometrySnapshot: GeometrySnapshot? = nil
     ) -> Result<MeasurementResult, MeasurementFailure> {
         let sweep = SineSweep(parameters: .init(
             startFrequency: 20, endFrequency: 20_000,
@@ -466,9 +510,18 @@ final class MeasurementCoordinator: ObservableObject {
         // Score + top problem (Listening purpose, internal mic — the only
         // v1 configuration; external-mic support arrives with the Pro tier).
         let score = ScoreEngine.score(.init(
-            report: report, purpose: .listening, microphone: .internalMic
+            report: report,
+            geometry: geometrySnapshot?.geometry,
+            purpose: .listening,
+            microphone: .internalMic
         ))
-        let diagnosis = DiagnosisEngine.diagnose(.init(report: report, purpose: .listening))
+        let diagnosis = DiagnosisEngine.diagnose(.init(
+            report: report,
+            geometry: geometrySnapshot?.geometry,
+            purpose: .listening,
+            speakerPositions: geometrySnapshot?.speakers ?? [],
+            listenerPosition: geometrySnapshot?.listener
+        ))
         let topProblemText = diagnosis.topProblem.map { "\($0.title): \($0.explanation)" }
 
         // POST-HOC capture-quality validation, derived from the sweep
@@ -516,6 +569,7 @@ final class MeasurementCoordinator: ObservableObject {
             inputDescription: inputDescription,
             captureSetupReport: captureSetupReport,
             qualityAdvice: qualityAdvice,
+            geometrySnapshot: geometrySnapshot,
             score: score,
             topProblemText: topProblemText,
             recordingURL: savedURL
