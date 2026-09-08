@@ -44,6 +44,18 @@ this automatically — paste its report into the row):
 - Multiple built-in mics: verify which one the default route selects and pin
   it (bottom mic preferred; avoid the noise-cancelling-processed routes).
 
+## Open observation: capture deviations vs phone orientation / non-diffuse fields
+
+Room 3, garage (2026-09-08, phone vertical on tripod): the 500 Hz octave
+reads ~20 % SHORT vs the OmniMic reference at the same position, while
+250 Hz and 1–4 kHz agree within ±5 %. Proven capture-chain (the engine
+reads REW's own IR of the room within 2.4 %). The garage is the least
+diffuse campaign room (concentrated junk-pile absorption → direction-
+dependent decay); 125 Hz reads +25 % there while room 2 read −35 % —
+orientation/directivity interaction suspected in both. Controlled test
+pending: same position, phone horizontal vs vertical, against the same
+reference.
+
 ## Open observation: LF readings vs phone orientation (room 2, 2026-09-07)
 
 Room 2 (phone on a tripod, VERTICAL, screen facing the system, bottom mic
